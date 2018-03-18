@@ -7,6 +7,7 @@ extern crate rusqlite;
 extern crate glob;
 extern crate r2d2;
 extern crate r2d2_sqlite;
+extern crate threadpool;
 use docopt::Docopt;
 use std::sync::mpsc::{Sender, Receiver};
 use std::fs;
@@ -22,7 +23,8 @@ use std::thread;
 use glob::glob;
 use std::sync::mpsc;
 use r2d2_sqlite::SqliteConnectionManager;
-
+use threadpool::ThreadPool;
+use threadpool::Builder;
 const USAGE: &'static str = "
 Tera Statistics Analyser.
 
@@ -44,41 +46,59 @@ struct Args {
   flag_source: String,
   flag_target: String,
 }
-
+/**
+ * - Find recursivly all .xz files from the source folder
+ * - Create a create of each of those file. The thread decompressed them and parse them as Json
+ * - For each of those json, create a new processing thread. Those threads store statistics inside sqlite in memory database.
+ * - Export statistics to files
+ *
+ * TODO a little drawing on how it work
+**/
 fn main() {
   let args: Args = Docopt::new(USAGE)
     .and_then(|d| d.deserialize())
     .unwrap_or_else(|e| e.exit());
-  let pool = database_initialization();
-  let conn = pool.get().unwrap();
+
+  let database_pool = database_initialization();
+  let conn = database_pool.get().unwrap();
   class_count::initialize(conn);
 
   let (tx, rx): (Sender<Vec<StatsLog>>, Receiver<Vec<StatsLog>>) = mpsc::channel();
-
   let search = format!("{}/**/*.xz", args.flag_source);
+  let thread_pool: ThreadPool  = Builder::new().build();
   for entry in glob(&search).expect("Failed to read glob pattern") {
     let os_string = entry.unwrap().into_os_string();
     let string = os_string.into_string().unwrap();
     let thread_tx = tx.clone();
-    thread::spawn(move || {
+    // read the compressed file and parse the json
+    thread_pool.execute(move || {
       let string_copy = string.clone();
       let contents = StatsLog::new(string);
       thread_tx.send(contents).unwrap();
       println!("Parsing finished for {}", string_copy);
     });
   }
+
+  drop(tx);
+  let mut handles = Vec::new();
   for received in rx{
-    let thread_pool = pool.clone();
-    thread::spawn(move || {
-      let conn = thread_pool.get().unwrap();
+    let db_pool_clone = database_pool.clone();
+    // Compute the statistics based on the parsed json
+    let handle = thread::spawn(move || {
+      let conn = db_pool_clone.get().unwrap();
       process(conn, received);
       println!("Processing ended");
     });
+    handles.push(handle);
   }
 
+  for handle in handles{
+    handle.join().unwrap();
+  }
 
-  let thread_pool = pool.clone();
-  export(&thread_pool, args.flag_target);
+  let db_pool_clone = database_pool.clone();
+  //write to file
+  export(&db_pool_clone, args.flag_target);
 }
 
 fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsLog>){
@@ -87,20 +107,19 @@ fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsL
 
 fn export(pool: &Pool<SqliteConnectionManager>, target: String){
   let thread_pool = pool.clone();
-  thread::spawn(move || {
+  let handle = thread::spawn(move || {
     for region in REGIONS{
       let conn = thread_pool.get().unwrap();
       export_region(conn, &target, region);
     }
   });
+  handle.join().unwrap();
 }
 
 fn export_region(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str){
   let result = class_count::export_region(conn, region);
   let filename = format!("{}/{}.txt", target, region);
-  println!("write {}", filename);
   write_file(filename, result);
-  // return (db, target);
 }
 
 fn write_file(name: String, content: String){
@@ -120,9 +139,14 @@ fn write_file(name: String, content: String){
 }
 
 fn database_initialization() -> Pool<SqliteConnectionManager>{
-//  let manager = SqliteConnectionManager::memory();
-  let manager = SqliteConnectionManager::file("stats.db?mode=memory&cache=shared");
-  let pool = r2d2::Pool::new(manager).unwrap();
+  // In memory database can only have 1 connection, so the whole "pool" idea is a bit useless. But
+  // R2D2 make it easy to use with multi thread. Probably can do it properly with raw rustsqlite,
+  // but harder.
+  let manager = SqliteConnectionManager::memory();
+  let pool = r2d2::Pool::builder()
+        .max_size(1)
+        .build(manager)
+        .unwrap();
   return pool;
 }
 
@@ -181,7 +205,8 @@ mod class_count{
 impl StatsLog{
   pub fn new(filename: String) -> Vec<StatsLog>{
     println!("read {}", filename);
-    // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why
+    // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why.
+    // To improve and find why rust-lzma doesn't work.
     let mut command = String::from("unxz --stdout ");
     command.push_str(&filename);
     println!("command: {}", command);
@@ -195,6 +220,11 @@ impl StatsLog{
     return json;
   }
 }
+
+
+
+// Full json structure
+
 #[derive(Deserialize)]
 pub struct StatsLog {
   content: Encounter,
