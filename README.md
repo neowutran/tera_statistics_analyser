@@ -1,9 +1,11 @@
 # TeraStatisticsAnalyser
 
 Rust version of this https://github.com/neowutran/TeraDatabaseAnalysor 
+
 Analyse the logs recolted by Shinra meter and output some statistics
 
 Linux only due to some issue with the LZMA decompressor
+
 # Usage
 ```sh
 tera_statistics_analyser --source ~/QubesIncoming/hubic-tera/t/ --target /tmp/t/
