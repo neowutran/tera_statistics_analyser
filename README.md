@@ -4,7 +4,8 @@ Rust version of this https://github.com/neowutran/TeraDatabaseAnalysor
 
 Analyse the logs recolted by Shinra meter and output some statistics
 
-Linux only due to some issue with the LZMA decompressor
+Linux only due to some issue with the LZMA decompressor: https://github.com/neowutran/tera_statistics_analyser/blob/master/src/main.rs#L258 
+If someone know how to fix that 
 
 # Usage
 ```sh
@@ -53,3 +54,11 @@ Sorcerer:8474
 Valkyrie:7414
 Warrior:14115
 ```
+
+# What
+- Find recursivly all .xz files from the source folder
+- Create a create of each of those file. The thread decompressed them and parse them as Json
+- For each of those json, create a new processing thread. Those threads store statistics inside sqlite in memory database.
+- Export statistics to files
+
+
