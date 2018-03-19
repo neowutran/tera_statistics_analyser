@@ -94,7 +94,6 @@ fn main() {
   thread_pool.join();
 
   let db_pool_clone = database_pool.clone();
-  //write to file
   export(&db_pool_clone, args.flag_target);
 }
 
@@ -105,6 +104,7 @@ fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsL
 fn export(database_pool: &Pool<SqliteConnectionManager>, target: String){
   let database_pool_clone = database_pool.clone();
   let target_copy = target.clone();
+  let target_copy2 = target.clone();
   let thread_pool: ThreadPool = Builder::new().build();
   thread_pool.execute(move || {
     for region in REGIONS{
@@ -128,38 +128,45 @@ fn export(database_pool: &Pool<SqliteConnectionManager>, target: String){
     }
   });
 
+  let database_pool_clone = database_pool.clone();
+
+  thread_pool.execute(move || {
+    let conn = database_pool_clone.get().unwrap();
+    export_global(conn, &target_copy2);
+  });
   thread_pool.join();
 }
 
 fn export_region(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str){
   let result = class_count::export_region(conn, region);
-  match fs::create_dir(target){
-    Ok(_) => (),
-    Err(e) => println!("{}", e),
-  }
   let filename = format!("{}/{}.txt", target, region);
+  write_file(filename, result);
+}
+
+fn export_global(conn: PooledConnection<SqliteConnectionManager>, target: &String){
+  let result = class_count::export_global(conn);
+  let filename = format!("{}/global.txt", target);
   write_file(filename, result);
 }
 
 fn export_region_month(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
   let result = class_count::export_region_month(conn, region, date_start, date_end );
-  let directory = format!("{}/{}/", target, region);
-  let filename = format!("{}/{}-{}.txt", directory, date_start.year(), date_start.month());
-  match fs::create_dir(directory){
-    Ok(_) => (),
-    Err(e) => println!("{}", e),
-  }
+  let filename = format!("{}/{}/{}-{}.txt", target, region, date_start.year(), date_start.month());
   write_file(filename, result);
 }
 
 fn write_file(name: String, content: String){
   let path = Path::new(&name);
+  let parent = path.parent().unwrap();
+  match fs::create_dir(parent){
+    Ok(file) => file,
+    Err(why) => println!("unable to create dir: {}", why),
+  }
   let display = path.display();
   let mut file = match File::create(&path) {
     Err(why) => panic!("couldn't create {}: {}", display, why),
     Ok(file) => file,
   };
-
   match file.write_all(content.as_bytes()) {
     Err(why) => {
       panic!("couldn't write to {}: {}", display, why)
@@ -169,9 +176,6 @@ fn write_file(name: String, content: String){
 }
 
 fn database_initialization() -> Pool<SqliteConnectionManager>{
-  // In memory database can only have 1 connection, so the whole "pool" idea is a bit useless. But
-  // R2D2 make it easy to use with multi thread. Probably can do it properly with raw rustsqlite,
-  // but harder.
   let manager = SqliteConnectionManager::memory();
   let pool = r2d2::Pool::builder()
     .max_size(1)
@@ -186,6 +190,8 @@ mod class_count{
   use r2d2_sqlite::SqliteConnectionManager;
   use r2d2::PooledConnection;
   use chrono::prelude::*;
+  use rusqlite::Rows;
+  use rusqlite::Error;
   pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
     conn.execute("CREATE TABLE player_class (
                   id              INTEGER PRIMARY KEY,
@@ -195,7 +201,6 @@ mod class_count{
                   boss_id         INTEGER NOT NULL,
                   time            INTEGER NOT NULL
                   )", &[]).unwrap();
-    println!("player_class table created");
   }
 
   pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsLog>) {
@@ -214,36 +219,35 @@ mod class_count{
     }
   }
   pub fn export_region(conn: PooledConnection<SqliteConnectionManager>, region: &str) -> String{
-    let mut result = String::new();
-    {
       let mut stmt = conn.prepare("SELECT count(1), name from player_class where region = :region group by name").unwrap();
-      let mut rows = stmt.query_named(&[(":region", &region)]).unwrap();
-      while let Some(result_row) = rows.next() {
-        let row = result_row.unwrap();
-        let count: i64 = row.get(0);
-        let name: String = row.get(1);
-        let line = format!("{}:{}\n", name, count);
-        result.push_str(&line);
-      }
+      let rows = stmt.query_named(&[(":region", &region)]);
+      return parse_sql_result(rows);
+  }
 
+  fn parse_sql_result(rows: Result<Rows, Error>) -> String{
+    let mut rows = rows.unwrap();
+    let mut result = String::new();
+    while let Some(result_row) = rows.next() {
+      let row = result_row.unwrap();
+      let count: i64 = row.get(0);
+      let name: String = row.get(1);
+      let line = format!("{}:{}\n", name, count);
+      result.push_str(&line);
     }
     return result;
+
+  }
+
+  pub fn export_global(conn: PooledConnection<SqliteConnectionManager>) -> String{
+      let mut stmt = conn.prepare("SELECT count(1), name from player_class group by name").unwrap();
+      let rows = stmt.query_named(&[]);
+      return parse_sql_result(rows);
   }
 
   pub fn export_region_month(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> String{
-    let mut result = String::new();
-    {
       let mut stmt = conn.prepare("SELECT count(1), name from player_class where region = :region and time >= :date_start and time <= :date_end group by name").unwrap();
-      let mut rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]).unwrap();
-      while let Some(result_row) = rows.next() {
-        let row = result_row.unwrap();
-        let count: i64 = row.get(0);
-        let name: String = row.get(1);
-        let line = format!("{}:{}\n", name, count);
-        result.push_str(&line);
-      }
-    }
-    return result;
+      let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
+      return parse_sql_result(rows);
   }
 }
 
@@ -267,7 +271,6 @@ impl StatsLog{
 }
 
 // Full json structure
-
 #[derive(Deserialize)]
 pub struct StatsLog {
   content: Encounter,
