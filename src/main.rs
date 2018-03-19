@@ -189,6 +189,8 @@ mod dps_count{
   use rusqlite::Rows;
   use rusqlite::Error;
   use std::collections::HashMap;
+
+  const FACTOR: i64 = 10000;
   pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
     conn.execute("CREATE TABLE dps (
                   id              INTEGER PRIMARY KEY,
@@ -212,7 +214,7 @@ mod dps_count{
       for member in &content.content.members{
         let class = &member.player_class;
         let dps: i64 = member.player_dps.parse().unwrap();
-        let dps_cat = (dps / 10000) as i32;
+        let dps_cat = (dps / FACTOR) as i32;
         conn.execute_named("INSERT INTO dps (dps, class, region, dungeon_id, boss_id, time)
                   VALUES (:dps, :class, :region, :dungeon_id, :boss_id, :time)", &[(":dps", &dps_cat),(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
       }
@@ -226,7 +228,8 @@ mod dps_count{
       let row = result_row.unwrap();
       let count: i64 = row.get(0);
       let class: String = row.get(1);
-      let dps: i32 = row.get(2);
+      let dps: i64 = row.get(2);
+      let dps = dps * FACTOR;
       let boss_id: i32 = row.get(3);
       let area_id: i32 = row.get(4);
       let mut line = format!("{}:{}\n", dps, count);
