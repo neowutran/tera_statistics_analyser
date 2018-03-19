@@ -52,8 +52,6 @@ struct Args {
  * - Create a create of each of those file. The thread decompressed them and parse them as Json
  * - For each of those json, create a new processing thread. Those threads store statistics inside sqlite in memory database.
  * - Export statistics to files
- *
- * TODO a little drawing on how it work
  **/
 fn main() {
   let args: Args = Docopt::new(USAGE)
@@ -75,7 +73,6 @@ fn main() {
     thread_pool_decompress.execute(move || {
       let contents = StatsLog::new(&string);
       thread_tx.send(contents).unwrap();
-      println!("Parsing finished for {}", string);
     });
   }
 
@@ -86,7 +83,6 @@ fn main() {
     // Compute the statistics based on the parsed json
     thread_pool_process.execute(move || {
       process(&db_pool_clone, &received);
-      println!("Processing ended");
     });
   }
 
@@ -139,14 +135,14 @@ fn export_dps(conn: PooledConnection<SqliteConnectionManager>, target: &String, 
     let dungeon_id = key.1;
     let class = key.2;
     let data = result.1;
-    let boss_area = format!("{}-{}", dungeon_id, boss_id);
-    let filename = format!("{}/{}/{}/{}/{}-{}.txt", target, boss_area, class, region, date_start.year(), date_start.month());
+    let area_boss = format!("{}-{}", dungeon_id, boss_id);
+    let filename = format!("{target}/{area_boss}/{class}/{region}/{year}-{month}.txt", target = target, area_boss = area_boss, class = class, region = region, year = date_start.year(), month = date_start.month());
     write_file(filename, &data);
   }
 }
 fn export_class(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
   let result = class_count::export(conn, region, date_start, date_end );
-  let filename = format!("{}/{}/{}-{}.txt", target, region, date_start.year(), date_start.month());
+  let filename = format!("{target}/{region}/{year}-{month}.txt", target = target, region = region, year = date_start.year(), month = date_start.month());
   write_file(filename, &result);
 }
 
@@ -166,7 +162,7 @@ fn write_file(name: String, content: &String){
     Err(why) => {
       panic!("couldn't write to {}: {}", display, why)
     },
-    Ok(_) => println!("successfully wrote to {}", display),
+    Ok(_) => {},
   }
 }
 
@@ -178,8 +174,6 @@ fn database_initialization() -> Pool<SqliteConnectionManager>{
     .unwrap();
   return pool;
 }
-
-
 
 mod dps_count{
   use StatsLog;
@@ -308,12 +302,10 @@ mod class_count{
 
 impl StatsLog{
   pub fn new(filename: &String) -> Vec<StatsLog>{
-    println!("read {}", filename);
     // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why.
     // To improve and find why rust-lzma doesn't work.
     let mut command = String::from("unxz --stdout ");
     command.push_str(&filename);
-    println!("command: {}", command);
     let output = Command::new("sh")
       .arg("-c")
       .arg(command)
