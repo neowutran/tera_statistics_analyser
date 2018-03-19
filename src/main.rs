@@ -61,106 +61,101 @@ fn main() {
     .unwrap_or_else(|e| e.exit());
 
   let database_pool = database_initialization();
-  let conn = database_pool.get().unwrap();
-  class_count::initialize(conn);
+  let database_pool_clone = database_pool.clone();
+  initialize(&database_pool_clone);
 
   let (tx, rx): (Sender<Vec<StatsLog>>, Receiver<Vec<StatsLog>>) = mpsc::channel();
   let search = format!("{}/**/*.xz", args.flag_source);
-  let thread_pool: ThreadPool = Builder::new().build();
+  let thread_pool_decompress: ThreadPool = Builder::new().build();
   for entry in glob(&search).expect("Failed to read glob pattern") {
     let os_string = entry.unwrap().into_os_string();
     let string = os_string.into_string().unwrap();
     let thread_tx = tx.clone();
     // read the compressed file and parse the json
-    thread_pool.execute(move || {
-      let string_copy = string.clone();
-      let contents = StatsLog::new(string);
+    thread_pool_decompress.execute(move || {
+      let contents = StatsLog::new(&string);
       thread_tx.send(contents).unwrap();
-      println!("Parsing finished for {}", string_copy);
+      println!("Parsing finished for {}", string);
     });
   }
 
   drop(tx);
+  let thread_pool_process: ThreadPool = Builder::new().build();
   for received in rx{
     let db_pool_clone = database_pool.clone();
     // Compute the statistics based on the parsed json
-    thread_pool.execute(move || {
-      let conn = db_pool_clone.get().unwrap();
-      process(conn, received);
+    thread_pool_process.execute(move || {
+      process(&db_pool_clone, &received);
       println!("Processing ended");
     });
   }
 
-  thread_pool.join();
-
+  thread_pool_decompress.join();
+  thread_pool_process.join();
   let db_pool_clone = database_pool.clone();
   export(&db_pool_clone, args.flag_target);
 }
 
-fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsLog>){
+fn initialize(database_pool: &Pool<SqliteConnectionManager>){
+  let conn = database_pool.get().unwrap();
+  class_count::initialize(conn);
+  let conn = database_pool.get().unwrap();
+  dps_count::initialize(conn);
+}
+
+fn process(database_pool: &Pool<SqliteConnectionManager>, contents: &Vec<StatsLog>){
+  let conn = database_pool.get().unwrap();
   class_count::process(conn, contents);
+  let conn = database_pool.get().unwrap();
+  dps_count::process(conn, contents);
 }
 
 fn export(database_pool: &Pool<SqliteConnectionManager>, target: String){
-  let database_pool_clone = database_pool.clone();
-  let target_copy = target.clone();
-  let target_copy2 = target.clone();
   let thread_pool: ThreadPool = Builder::new().build();
-  thread_pool.execute(move || {
-    for region in REGIONS{
-      let conn = database_pool_clone.get().unwrap();
-      export_region(conn, &target, region);
-    }
-  });
-
   let mut beginning = Utc.datetime_from_str("2018-03-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
   let current:i64 = Utc::now().timestamp();
-
-  let database_pool_clone = database_pool.clone();
-  thread_pool.execute(move || {
-    while beginning.timestamp() < current{
-      let end = beginning + Duration::days(30);
+  while beginning.timestamp() < current{
+    let end = beginning + Duration::days(30);
+    let database_pool_clone = database_pool.clone();
+    let target_copy = target.clone();
+    thread_pool.execute(move || {
       for region in REGIONS{
         let conn = database_pool_clone.get().unwrap();
-        export_region_month(conn, &target_copy, region, beginning, end);
+        export_class(conn, &target_copy, region, beginning, end);
+        let conn = database_pool_clone.get().unwrap();
+        export_dps(conn, &target_copy, region, beginning, end);
       }
-      beginning = end;
-    }
-  });
-
-  let database_pool_clone = database_pool.clone();
-
-  thread_pool.execute(move || {
-    let conn = database_pool_clone.get().unwrap();
-    export_global(conn, &target_copy2);
-  });
+    });
+    beginning = end;
+  }
   thread_pool.join();
 }
 
-fn export_region(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str){
-  let result = class_count::export_region(conn, region);
-  let filename = format!("{}/{}.txt", target, region);
-  write_file(filename, result);
+fn export_dps(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
+  let results = dps_count::export(conn, region, date_start, date_end );
+  for result in results{
+    let key = result.0;
+    let boss_id = key.0;
+    let dungeon_id = key.1;
+    let class = key.2;
+    let data = result.1;
+    let boss_area = format!("{}-{}", dungeon_id, boss_id);
+    let filename = format!("{}/{}/{}/{}/{}-{}.txt", target, boss_area, class, region, date_start.year(), date_start.month());
+    write_file(filename, &data);
+  }
 }
-
-fn export_global(conn: PooledConnection<SqliteConnectionManager>, target: &String){
-  let result = class_count::export_global(conn);
-  let filename = format!("{}/global.txt", target);
-  write_file(filename, result);
-}
-
-fn export_region_month(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
-  let result = class_count::export_region_month(conn, region, date_start, date_end );
+fn export_class(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
+  let result = class_count::export(conn, region, date_start, date_end );
   let filename = format!("{}/{}/{}-{}.txt", target, region, date_start.year(), date_start.month());
-  write_file(filename, result);
+  write_file(filename, &result);
 }
 
-fn write_file(name: String, content: String){
+fn write_file(name: String, content: &String){
   let path = Path::new(&name);
   let parent = path.parent().unwrap();
-  match fs::create_dir(parent){
+  match fs::create_dir_all(parent){
     Ok(file) => file,
-    Err(why) => println!("unable to create dir: {}", why),
+    Err(_) => {},
   }
   let display = path.display();
   let mut file = match File::create(&path) {
@@ -185,6 +180,74 @@ fn database_initialization() -> Pool<SqliteConnectionManager>{
 }
 
 
+
+mod dps_count{
+  use StatsLog;
+  use r2d2_sqlite::SqliteConnectionManager;
+  use r2d2::PooledConnection;
+  use chrono::prelude::*;
+  use rusqlite::Rows;
+  use rusqlite::Error;
+  use std::collections::HashMap;
+  pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
+    conn.execute("CREATE TABLE dps (
+                  id              INTEGER PRIMARY KEY,
+                  dps             INTEGER NOT NULL,
+                  class           TEXT NOT NULL,
+                  region          TEXT NOT NULL,
+                  dungeon_id      INTEGER NOT NULL,
+                  boss_id         INTEGER NOT NULL,
+                  time            INTEGER NOT NULL
+                  )", &[]).unwrap();
+  }
+
+  pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: &Vec<StatsLog>) {
+    for content in contents{
+      let directory_split = content.directory.split(".");
+      let directory_vec: Vec<&str> = directory_split.collect();
+      let region = String::from(directory_vec[0]);
+      let timestamp = content.content.timestamp;
+      let dungeon:i32 = content.content.area_id.parse().unwrap();
+      let boss:i32 = content.content.boss_id.parse().unwrap();
+      for member in &content.content.members{
+        let class = &member.player_class;
+        let dps: i64 = member.player_dps.parse().unwrap();
+        let dps_cat = (dps / 10000) as i32;
+        conn.execute_named("INSERT INTO dps (dps, class, region, dungeon_id, boss_id, time)
+                  VALUES (:dps, :class, :region, :dungeon_id, :boss_id, :time)", &[(":dps", &dps_cat),(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
+      }
+    }
+  }
+
+  fn parse_sql_result(rows: Result<Rows, Error>) -> HashMap<(i32, i32, String), String>{
+    let mut rows = rows.unwrap();
+    let mut data = HashMap::new();
+    while let Some(result_row) = rows.next() {
+      let row = result_row.unwrap();
+      let count: i64 = row.get(0);
+      let class: String = row.get(1);
+      let dps: i32 = row.get(2);
+      let boss_id: i32 = row.get(3);
+      let area_id: i32 = row.get(4);
+      let mut line = format!("{}:{}\n", dps, count);
+      let key = (boss_id, area_id, class);
+      if data.contains_key(&key){
+        let existing_line = data.get(&key).unwrap();
+        line = format!("{}{}", existing_line, line);
+      }
+      data.insert(key, line);
+    }
+    return data;
+
+  }
+
+  pub fn export(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> HashMap<(i32, i32, String), String>{
+    let mut stmt = conn.prepare("SELECT count(1), class, dps, boss_id, dungeon_id from dps where region = :region and time >= :date_start and time <= :date_end group by class, dps, boss_id, dungeon_id").unwrap();
+    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
+    return parse_sql_result(rows);
+  }
+}
+
 mod class_count{
   use StatsLog;
   use r2d2_sqlite::SqliteConnectionManager;
@@ -195,7 +258,7 @@ mod class_count{
   pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
     conn.execute("CREATE TABLE player_class (
                   id              INTEGER PRIMARY KEY,
-                  name            TEXT NOT NULL,
+                  class           TEXT NOT NULL,
                   region          TEXT NOT NULL,
                   dungeon_id      INTEGER NOT NULL,
                   boss_id         INTEGER NOT NULL,
@@ -203,7 +266,7 @@ mod class_count{
                   )", &[]).unwrap();
   }
 
-  pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: Vec<StatsLog>) {
+  pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: &Vec<StatsLog>) {
     for content in contents{
       let directory_split = content.directory.split(".");
       let directory_vec: Vec<&str> = directory_split.collect();
@@ -211,17 +274,12 @@ mod class_count{
       let timestamp = content.content.timestamp;
       let dungeon:i32 = content.content.area_id.parse().unwrap();
       let boss:i32 = content.content.boss_id.parse().unwrap();
-      for member in content.content.members{
-        let class = member.player_class;
-        conn.execute_named("INSERT INTO player_class (name, region, dungeon_id, boss_id, time)
-                  VALUES (:name, :region, :dungeon_id, :boss_id, :time)", &[(":name", &class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
+      for member in &content.content.members{
+        let class = &member.player_class;
+        conn.execute_named("INSERT INTO player_class (class, region, dungeon_id, boss_id, time)
+                  VALUES (:class, :region, :dungeon_id, :boss_id, :time)", &[(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
       }
     }
-  }
-  pub fn export_region(conn: PooledConnection<SqliteConnectionManager>, region: &str) -> String{
-      let mut stmt = conn.prepare("SELECT count(1), name from player_class where region = :region group by name").unwrap();
-      let rows = stmt.query_named(&[(":region", &region)]);
-      return parse_sql_result(rows);
   }
 
   fn parse_sql_result(rows: Result<Rows, Error>) -> String{
@@ -238,21 +296,15 @@ mod class_count{
 
   }
 
-  pub fn export_global(conn: PooledConnection<SqliteConnectionManager>) -> String{
-      let mut stmt = conn.prepare("SELECT count(1), name from player_class group by name").unwrap();
-      let rows = stmt.query_named(&[]);
-      return parse_sql_result(rows);
-  }
-
-  pub fn export_region_month(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> String{
-      let mut stmt = conn.prepare("SELECT count(1), name from player_class where region = :region and time >= :date_start and time <= :date_end group by name").unwrap();
-      let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
-      return parse_sql_result(rows);
+  pub fn export(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> String{
+    let mut stmt = conn.prepare("SELECT count(1), class from player_class where region = :region and time >= :date_start and time <= :date_end group by class").unwrap();
+    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
+    return parse_sql_result(rows);
   }
 }
 
 impl StatsLog{
-  pub fn new(filename: String) -> Vec<StatsLog>{
+  pub fn new(filename: &String) -> Vec<StatsLog>{
     println!("read {}", filename);
     // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why.
     // To improve and find why rust-lzma doesn't work.
@@ -325,8 +377,8 @@ struct Members{
   //player_death_duration: String,
   //#[serde(rename="playerDeaths")]
   //player_deaths: String,
-  //#[serde(rename="playerDps")]
-  //player_dps: String,
+  #[serde(rename="playerDps")]
+  player_dps: String,
   //#[serde(rename="playerId")]
   //player_id:u32,
   //#[serde(rename="playerName")]
@@ -364,4 +416,3 @@ struct SkillLog{
   //#[serde(rename="skillTotalDamage")]
   //skill_total_damage: String,
 }
-
