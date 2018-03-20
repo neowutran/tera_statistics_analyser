@@ -136,13 +136,13 @@ fn export_dps(conn: PooledConnection<SqliteConnectionManager>, target: &String, 
     let class = key.2;
     let data = result.1;
     let area_boss = format!("{}-{}", dungeon_id, boss_id);
-    let filename = format!("{target}/{area_boss}/{class}/{region}/{year}-{month}.txt", target = target, area_boss = area_boss, class = class, region = region, year = date_start.year(), month = date_start.month());
+    let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{year}-{month}.txt", target = target, area_boss = area_boss, class = class, region = region, year = date_start.year(), month = date_start.month());
     write_file(filename, &data);
   }
 }
 fn export_class(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
   let result = class_count::export(conn, region, date_start, date_end );
-  let filename = format!("{target}/{region}/{year}-{month}.txt", target = target, region = region, year = date_start.year(), month = date_start.month());
+  let filename = format!("{target}/class/{region}/{year}-{month}.txt", target = target, region = region, year = date_start.year(), month = date_start.month());
   write_file(filename, &result);
 }
 
@@ -184,7 +184,8 @@ mod dps_count{
   use rusqlite::Error;
   use std::collections::HashMap;
 
-  const FACTOR: i64 = 10000;
+  pub const STEP: i64 = 100000;
+  pub const MAX_PLAUSIBLE_DPS: i64 = 5000000;
   pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
     conn.execute("CREATE TABLE dps (
                   id              INTEGER PRIMARY KEY,
@@ -208,14 +209,14 @@ mod dps_count{
       for member in &content.content.members{
         let class = &member.player_class;
         let dps: i64 = member.player_dps.parse().unwrap();
-        let dps_cat = (dps / FACTOR) as i32;
+        let dps_cat = (dps / STEP) as i32;
         conn.execute_named("INSERT INTO dps (dps, class, region, dungeon_id, boss_id, time)
                   VALUES (:dps, :class, :region, :dungeon_id, :boss_id, :time)", &[(":dps", &dps_cat),(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
       }
     }
   }
 
-  fn parse_sql_result(rows: Result<Rows, Error>) -> HashMap<(i32, i32, String), String>{
+  fn parse_sql_result(rows: Result<Rows, Error>) -> HashMap<(i32, i32, String), HashMap<i64, i64>>{
     let mut rows = rows.unwrap();
     let mut data = HashMap::new();
     while let Some(result_row) = rows.next() {
@@ -223,16 +224,12 @@ mod dps_count{
       let count: i64 = row.get(0);
       let class: String = row.get(1);
       let dps: i64 = row.get(2);
-      let dps = dps * FACTOR;
+      let dps = dps * STEP;
       let boss_id: i32 = row.get(3);
       let area_id: i32 = row.get(4);
-      let mut line = format!("{}:{}\n", dps, count);
       let key = (boss_id, area_id, class);
-      if data.contains_key(&key){
-        let existing_line = data.get(&key).unwrap();
-        line = format!("{}{}", existing_line, line);
-      }
-      data.insert(key, line);
+      let stat = data.entry(key).or_insert(HashMap::new());
+      stat.insert(dps, count);
     }
     return data;
 
@@ -241,7 +238,24 @@ mod dps_count{
   pub fn export(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> HashMap<(i32, i32, String), String>{
     let mut stmt = conn.prepare("SELECT count(1), class, dps, boss_id, dungeon_id from dps where region = :region and time >= :date_start and time <= :date_end group by class, dps, boss_id, dungeon_id").unwrap();
     let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
-    return parse_sql_result(rows);
+    let mut final_result = HashMap::new();
+    let results = parse_sql_result(rows);
+    for result in results{
+      let key = result.0;
+      let data = result.1;
+      let mut data_str = String::new();
+      let mut dps = 0;
+      while dps <= MAX_PLAUSIBLE_DPS {
+        let mut count: i64 = 0;
+        if data.contains_key(&dps) {
+          count += data.get(&dps).unwrap();
+        }
+        data_str.push_str(&format!("{}:{}\n", dps, count));
+        dps += STEP;
+      }
+      final_result.insert(key, data_str);
+    }
+    return final_result;
   }
 }
 
