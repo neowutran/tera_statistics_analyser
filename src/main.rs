@@ -4,11 +4,10 @@ extern crate docopt;
 extern crate serde_json;
 extern crate rusqlite;
 extern crate glob;
-extern crate r2d2;
-extern crate time;
-extern crate r2d2_sqlite;
 extern crate threadpool;
 extern crate chrono;
+extern crate num_cpus;
+use std::time::{SystemTime, UNIX_EPOCH};
 use docopt::Docopt;
 use std::sync::mpsc::{Sender, Receiver};
 use std::str;
@@ -16,29 +15,28 @@ use std::fs::File;
 use std::path::Path;
 use std::process::Command;
 use std::io::prelude::*;
-use r2d2::Pool;
-use r2d2::PooledConnection;
 use glob::glob;
 use std::sync::mpsc;
-use r2d2_sqlite::SqliteConnectionManager;
 use threadpool::ThreadPool;
-use threadpool::Builder;
 use std::fs;
-use time::Duration;
-use chrono::prelude::*;
+use rusqlite::Connection;
 const USAGE: &'static str = "
 Tera Statistics Analyser.
 
 Usage:
-  tera_statistics_analyser [--source <source>] [--target <target>]
+  tera_statistics_analyser [--source <source>] [--target <target>] [--time-start <time_start>] [--time-steps <time_steps>] [--dps-steps <dps_steps>] [--dps-max <dps_max>]
   tera_statistics_analyser (-h | --help)
   tera_statistics_analyser --version
 
 Options:
-  -h --help     Show this screen.
-  --version     Show version.
-  --source <source>   Source data directory [default: ./].
-  --target <target>   Target data directory [default: ./].
+  -h --help                         Show this screen.
+  --version                         Show version.
+  --time-start <time_start>         Start date for export [default: 1519858800]
+  --time-steps <time_steps>         Steps for time [default: 2629800]
+  --dps-steps <dps_steps>           Steps for dps [default: 100000]
+  --dps-max <dps_max>               Max plausible dps [default: 5000000]
+  --source <source>                 Source data directory [default: ./].
+  --target <target>                 Target data directory [default: ./].
 ";
 
 const REGIONS: &'static [&'static str] = &["EU", "NA", "KR", "JP", "RU", "TW", "KR-PTS", "THA"];
@@ -46,11 +44,15 @@ const REGIONS: &'static [&'static str] = &["EU", "NA", "KR", "JP", "RU", "TW", "
 struct Args {
   flag_source: String,
   flag_target: String,
+  flag_time_start: i64,
+  flag_time_steps: i64,
+  flag_dps_steps: i64,
+  flag_dps_max: i64,
 }
 /**
  * - Find recursivly all .xz files from the source folder
- * - Create a create of each of those file. The thread decompressed them and parse them as Json
- * - For each of those json, create a new processing thread. Those threads store statistics inside sqlite in memory database.
+ * - Decompressed and parse them as Json
+ * - For each of those json, store statistics inside DB.
  * - Export statistics to files
  **/
 fn main() {
@@ -58,18 +60,24 @@ fn main() {
     .and_then(|d| d.deserialize())
     .unwrap_or_else(|e| e.exit());
 
-  let database_pool = database_initialization();
-  let database_pool_clone = database_pool.clone();
-  initialize(&database_pool_clone);
+  let start = SystemTime::now();
+  let start = start.duration_since(UNIX_EPOCH).unwrap();
+  let conn = Connection::open_in_memory().unwrap();
+  initialize(&conn);
 
   let (tx, rx): (Sender<Vec<StatsLog>>, Receiver<Vec<StatsLog>>) = mpsc::channel();
   let search = format!("{}/**/*.xz", args.flag_source);
-  let thread_pool_decompress: ThreadPool = Builder::new().build();
+  let full_cpus = num_cpus::get();
+  let mut usable_cpus = full_cpus - 1;
+  println!("Number of virtual core: {}", full_cpus);
+  if usable_cpus <= 1{
+    usable_cpus = 1;
+  }
+  let thread_pool_decompress: ThreadPool = ThreadPool::new(usable_cpus);
   for entry in glob(&search).expect("Failed to read glob pattern") {
     let os_string = entry.unwrap().into_os_string();
     let string = os_string.into_string().unwrap();
     let thread_tx = tx.clone();
-    // read the compressed file and parse the json
     thread_pool_decompress.execute(move || {
       let contents = StatsLog::new(&string);
       thread_tx.send(contents).unwrap();
@@ -77,58 +85,41 @@ fn main() {
   }
 
   drop(tx);
-  let thread_pool_process: ThreadPool = Builder::new().build();
   for received in rx{
-    let db_pool_clone = database_pool.clone();
-    // Compute the statistics based on the parsed json
-    thread_pool_process.execute(move || {
-      process(&db_pool_clone, &received);
-    });
+    process(&conn, &received, args.flag_dps_steps);
   }
 
-  thread_pool_decompress.join();
-  thread_pool_process.join();
-  let db_pool_clone = database_pool.clone();
-  export(&db_pool_clone, args.flag_target);
+  export(&conn, args.flag_target, args.flag_time_start, args.flag_time_steps, args.flag_dps_steps, args.flag_dps_max);
+  let end = SystemTime::now();
+  let end = end.duration_since(UNIX_EPOCH).unwrap();
+  println!("duration: {} s : {} ns", end.as_secs() - start.as_secs(), end.subsec_nanos() - start.subsec_nanos());
 }
 
-fn initialize(database_pool: &Pool<SqliteConnectionManager>){
-  let conn = database_pool.get().unwrap();
-  class_count::initialize(conn);
-  let conn = database_pool.get().unwrap();
-  dps_count::initialize(conn);
+fn initialize(conn: &Connection){
+  count::initialize(conn);
 }
 
-fn process(database_pool: &Pool<SqliteConnectionManager>, contents: &Vec<StatsLog>){
-  let conn = database_pool.get().unwrap();
-  class_count::process(conn, contents);
-  let conn = database_pool.get().unwrap();
-  dps_count::process(conn, contents);
+fn process(conn: &Connection, contents: &Vec<StatsLog>, dps_steps: i64){
+  count::process(conn, contents, dps_steps);
 }
 
-fn export(database_pool: &Pool<SqliteConnectionManager>, target: String){
-  let thread_pool: ThreadPool = Builder::new().build();
-  let mut beginning = Utc.datetime_from_str("2018-03-01 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
-  let current:i64 = Utc::now().timestamp();
-  while beginning.timestamp() < current{
-    let end = beginning + Duration::days(30);
-    let database_pool_clone = database_pool.clone();
-    let target_copy = target.clone();
-    thread_pool.execute(move || {
-      for region in REGIONS{
-        let conn = database_pool_clone.get().unwrap();
-        export_class(conn, &target_copy, region, beginning, end);
-        let conn = database_pool_clone.get().unwrap();
-        export_dps(conn, &target_copy, region, beginning, end);
-      }
-    });
+fn export(conn: &Connection, target: String, time_start: i64, time_step: i64, dps_steps: i64, dps_max: i64){
+  let mut beginning = time_start;
+  let current = SystemTime::now();
+  let current = current.duration_since(UNIX_EPOCH).unwrap();
+  let current = current.as_secs() as i64;
+  while beginning < current{
+    let end = beginning + time_step;
+    for region in REGIONS{
+      export_class(conn, &target, region, beginning, end);
+      export_dps(conn, &target, region, beginning, end, dps_steps, dps_max);
+    }
     beginning = end;
   }
-  thread_pool.join();
 }
 
-fn export_dps(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
-  let results = dps_count::export(conn, region, date_start, date_end );
+fn export_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, dps_steps: i64, dps_max: i64){
+  let results = count::export_dps(conn, region, date_start, date_end, dps_steps, dps_max );
   for result in results{
     let key = result.0;
     let boss_id = key.0;
@@ -136,13 +127,13 @@ fn export_dps(conn: PooledConnection<SqliteConnectionManager>, target: &String, 
     let class = key.2;
     let data = result.1;
     let area_boss = format!("{}-{}", dungeon_id, boss_id);
-    let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{year}-{month}.txt", target = target, area_boss = area_boss, class = class, region = region, year = date_start.year(), month = date_start.month());
+    let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss, class = class, region = region, start = date_start, end = date_end);
     write_file(filename, &data);
   }
 }
-fn export_class(conn: PooledConnection<SqliteConnectionManager>, target: &String, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>){
-  let result = class_count::export(conn, region, date_start, date_end );
-  let filename = format!("{target}/class/{region}/{year}-{month}.txt", target = target, region = region, year = date_start.year(), month = date_start.month());
+fn export_class(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64){
+  let result = count::export_class(conn, region, date_start, date_end );
+  let filename = format!("{target}/class/{region}/{start}-{end}.txt", target = target, region = region, start = date_start, end = date_end);
   write_file(filename, &result);
 }
 
@@ -166,27 +157,14 @@ fn write_file(name: String, content: &String){
   }
 }
 
-fn database_initialization() -> Pool<SqliteConnectionManager>{
-  let manager = SqliteConnectionManager::memory();
-  let pool = r2d2::Pool::builder()
-    .max_size(1)
-    .build(manager)
-    .unwrap();
-  return pool;
-}
-
-mod dps_count{
+mod count{
   use StatsLog;
-  use r2d2_sqlite::SqliteConnectionManager;
-  use r2d2::PooledConnection;
-  use chrono::prelude::*;
   use rusqlite::Rows;
   use rusqlite::Error;
   use std::collections::HashMap;
+  use rusqlite::Connection;
 
-  pub const STEP: i64 = 100000;
-  pub const MAX_PLAUSIBLE_DPS: i64 = 5000000;
-  pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
+  pub fn initialize(conn: &Connection){
     conn.execute("CREATE TABLE dps (
                   id              INTEGER PRIMARY KEY,
                   dps             INTEGER NOT NULL,
@@ -198,7 +176,7 @@ mod dps_count{
                   )", &[]).unwrap();
   }
 
-  pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: &Vec<StatsLog>) {
+  pub fn process(conn: &Connection, contents: &Vec<StatsLog>, dps_steps: i64) {
     for content in contents{
       let directory_split = content.directory.split(".");
       let directory_vec: Vec<&str> = directory_split.collect();
@@ -209,14 +187,14 @@ mod dps_count{
       for member in &content.content.members{
         let class = &member.player_class;
         let dps: i64 = member.player_dps.parse().unwrap();
-        let dps_cat = (dps / STEP) as i32;
+        let dps_cat = (dps / dps_steps) as i64;
         conn.execute_named("INSERT INTO dps (dps, class, region, dungeon_id, boss_id, time)
                   VALUES (:dps, :class, :region, :dungeon_id, :boss_id, :time)", &[(":dps", &dps_cat),(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
       }
     }
   }
 
-  fn parse_sql_result(rows: Result<Rows, Error>) -> HashMap<(i32, i32, String), HashMap<i64, i64>>{
+  fn parse_sql_result_dps(rows: Result<Rows, Error>, dps_steps: i64) -> HashMap<(i32, i32, String), HashMap<i64, i64>>{
     let mut rows = rows.unwrap();
     let mut data = HashMap::new();
     while let Some(result_row) = rows.next() {
@@ -224,76 +202,17 @@ mod dps_count{
       let count: i64 = row.get(0);
       let class: String = row.get(1);
       let dps: i64 = row.get(2);
-      let dps = dps * STEP;
+      let dps = dps * dps_steps;
       let boss_id: i32 = row.get(3);
       let area_id: i32 = row.get(4);
       let key = (boss_id, area_id, class);
       let stat = data.entry(key).or_insert(HashMap::new());
       stat.insert(dps, count);
     }
-    return data;
-
+    data
   }
 
-  pub fn export(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> HashMap<(i32, i32, String), String>{
-    let mut stmt = conn.prepare("SELECT count(1), class, dps, boss_id, dungeon_id from dps where region = :region and time >= :date_start and time <= :date_end group by class, dps, boss_id, dungeon_id").unwrap();
-    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
-    let mut final_result = HashMap::new();
-    let results = parse_sql_result(rows);
-    for result in results{
-      let key = result.0;
-      let data = result.1;
-      let mut data_str = String::new();
-      let mut dps = 0;
-      while dps <= MAX_PLAUSIBLE_DPS {
-        let mut count: i64 = 0;
-        if data.contains_key(&dps) {
-          count += data.get(&dps).unwrap();
-        }
-        data_str.push_str(&format!("{}:{}\n", dps, count));
-        dps += STEP;
-      }
-      final_result.insert(key, data_str);
-    }
-    return final_result;
-  }
-}
-
-mod class_count{
-  use StatsLog;
-  use r2d2_sqlite::SqliteConnectionManager;
-  use r2d2::PooledConnection;
-  use chrono::prelude::*;
-  use rusqlite::Rows;
-  use rusqlite::Error;
-  pub fn initialize(conn: PooledConnection<SqliteConnectionManager>){
-    conn.execute("CREATE TABLE player_class (
-                  id              INTEGER PRIMARY KEY,
-                  class           TEXT NOT NULL,
-                  region          TEXT NOT NULL,
-                  dungeon_id      INTEGER NOT NULL,
-                  boss_id         INTEGER NOT NULL,
-                  time            INTEGER NOT NULL
-                  )", &[]).unwrap();
-  }
-
-  pub fn process(conn: PooledConnection<SqliteConnectionManager>, contents: &Vec<StatsLog>) {
-    for content in contents{
-      let directory_split = content.directory.split(".");
-      let directory_vec: Vec<&str> = directory_split.collect();
-      let region = String::from(directory_vec[0]);
-      let timestamp = content.content.timestamp;
-      let dungeon:i32 = content.content.area_id.parse().unwrap();
-      let boss:i32 = content.content.boss_id.parse().unwrap();
-      for member in &content.content.members{
-        let class = &member.player_class;
-        conn.execute_named("INSERT INTO player_class (class, region, dungeon_id, boss_id, time)
-                  VALUES (:class, :region, :dungeon_id, :boss_id, :time)", &[(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
-      }
-    }
-  }
-
-  fn parse_sql_result(rows: Result<Rows, Error>) -> String{
+  fn parse_sql_result_class(rows: Result<Rows, Error>) -> String{
     let mut rows = rows.unwrap();
     let mut result = String::new();
     while let Some(result_row) = rows.next() {
@@ -303,14 +222,37 @@ mod class_count{
       let line = format!("{}:{}\n", name, count);
       result.push_str(&line);
     }
-    return result;
+    result
 
   }
 
-  pub fn export(conn: PooledConnection<SqliteConnectionManager>, region: &str, date_start: DateTime<Utc>, date_end: DateTime<Utc>)-> String{
-    let mut stmt = conn.prepare("SELECT count(1), class from player_class where region = :region and time >= :date_start and time <= :date_end group by class").unwrap();
-    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start.timestamp()), (":date_end", &date_end.timestamp())]);
-    return parse_sql_result(rows);
+  pub fn export_class(conn: &Connection, region: &str, date_start: i64, date_end: i64)-> String{
+    let mut stmt = conn.prepare("SELECT count(1), class from dps where region = :region and time >= :date_start and time <= :date_end group by class").unwrap();
+    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start), (":date_end", &date_end)]);
+    parse_sql_result_class(rows)
+  }
+
+  pub fn export_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, dps_steps: i64, dps_max: i64)-> HashMap<(i32, i32, String), String>{
+    let mut stmt = conn.prepare("SELECT count(1), class, dps, boss_id, dungeon_id from dps where region = :region and time >= :date_start and time <= :date_end group by class, dps, boss_id, dungeon_id").unwrap();
+    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start), (":date_end", &date_end)]);
+    let mut final_result = HashMap::new();
+    let results = parse_sql_result_dps(rows, dps_steps);
+    for result in results{
+      let key = result.0;
+      let data = result.1;
+      let mut data_str = String::new();
+      let mut dps = 0;
+      while dps <= dps_max {
+        let mut count: i64 = 0;
+        if data.contains_key(&dps) {
+          count += data.get(&dps).unwrap();
+        }
+        data_str.push_str(&format!("{}:{}\n", dps, count));
+        dps += dps_steps;
+      }
+      final_result.insert(key, data_str);
+    }
+    final_result
   }
 }
 
@@ -326,8 +268,7 @@ impl StatsLog{
       .output()
       .expect("failed to execute process");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let json: Vec<StatsLog> = serde_json::from_str(&stdout).unwrap();
-    return json;
+    serde_json::from_str(&stdout).unwrap()
   }
 }
 
