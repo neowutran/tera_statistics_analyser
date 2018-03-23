@@ -61,7 +61,7 @@ fn main() {
     .unwrap_or_else(|e| e.exit());
 
   let start = SystemTime::now();
-  let start = start.duration_since(UNIX_EPOCH).unwrap();
+  let start: u64 = start.duration_since(UNIX_EPOCH).unwrap().as_secs();
   let conn = Connection::open_in_memory().unwrap();
   initialize(&conn);
 
@@ -86,21 +86,21 @@ fn main() {
 
   drop(tx);
   for received in rx{
-    process(&conn, &received, args.flag_dps_steps);
+    process(&conn, &received);
   }
 
   export(&conn, args.flag_target, args.flag_time_start, args.flag_time_steps, args.flag_dps_steps, args.flag_dps_max);
   let end = SystemTime::now();
-  let end = end.duration_since(UNIX_EPOCH).unwrap();
-  println!("duration: {} s : {} ns", end.as_secs() - start.as_secs(), end.subsec_nanos() - start.subsec_nanos());
+  let end: u64 = end.duration_since(UNIX_EPOCH).unwrap().as_secs();
+  println!("duration: {} s", (end - start) as i64);
 }
 
 fn initialize(conn: &Connection){
   count::initialize(conn);
 }
 
-fn process(conn: &Connection, contents: &Vec<StatsLog>, dps_steps: i64){
-  count::process(conn, contents, dps_steps);
+fn process(conn: &Connection, contents: &Vec<StatsLog>){
+  count::process(conn, contents);
 }
 
 fn export(conn: &Connection, target: String, time_start: i64, time_step: i64, dps_steps: i64, dps_max: i64){
@@ -113,11 +113,23 @@ fn export(conn: &Connection, target: String, time_start: i64, time_step: i64, dp
     for region in REGIONS{
       export_class(conn, &target, region, beginning, end);
       export_dps(conn, &target, region, beginning, end, dps_steps, dps_max);
+      export_median_dps(conn, &target, region, beginning, end);
     }
     beginning = end;
   }
 }
 
+fn export_median_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64){
+  let all_boss = count::get_all_boss(conn);
+  for boss in all_boss{
+    let area_id = boss.0;
+    let boss_id = boss.1;
+    let area_boss = format!("{}-{}", area_id, boss_id);
+    let result = count::export_median_dps(conn, region, date_start, date_end, area_id, boss_id );
+    let filename = format!("{target}/median/{area_boss}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss ,region = region, start = date_start, end = date_end);
+    write_file(filename, &result);
+  }
+}
 fn export_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, dps_steps: i64, dps_max: i64){
   let results = count::export_dps(conn, region, date_start, date_end, dps_steps, dps_max );
   for result in results{
@@ -164,19 +176,20 @@ mod count{
   use std::collections::HashMap;
   use rusqlite::Connection;
 
+  pub const CLASS: &'static [&'static str] = &["Archer","Berserker","Brawler","Gunner","Lancer","Mystic","Ninja","Priest","Reaper","Slayer","Sorcerer","Valkyrie","Warrior"];
   pub fn initialize(conn: &Connection){
-    conn.execute("CREATE TABLE dps (
+    conn.execute("CREATE TABLE data (
                   id              INTEGER PRIMARY KEY,
                   dps             INTEGER NOT NULL,
-                  class           TEXT NOT NULL,
+                  class_name      TEXT NOT NULL,
                   region          TEXT NOT NULL,
-                  dungeon_id      INTEGER NOT NULL,
+                  area_id         INTEGER NOT NULL,
                   boss_id         INTEGER NOT NULL,
                   time            INTEGER NOT NULL
                   )", &[]).unwrap();
   }
 
-  pub fn process(conn: &Connection, contents: &Vec<StatsLog>, dps_steps: i64) {
+  pub fn process(conn: &Connection, contents: &Vec<StatsLog>) {
     for content in contents{
       let directory_split = content.directory.split(".");
       let directory_vec: Vec<&str> = directory_split.collect();
@@ -186,10 +199,15 @@ mod count{
       let boss:i32 = content.content.boss_id.parse().unwrap();
       for member in &content.content.members{
         let class = &member.player_class;
-        let dps: i64 = member.player_dps.parse().unwrap();
-        let dps_cat = (dps / dps_steps) as i64;
-        conn.execute_named("INSERT INTO dps (dps, class, region, dungeon_id, boss_id, time)
-                  VALUES (:dps, :class, :region, :dungeon_id, :boss_id, :time)", &[(":dps", &dps_cat),(":class", class), (":region",&region), (":dungeon_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
+        let found = CLASS.iter().find(|&&c| c == class);
+        match found{
+          Some(_) => {
+            let dps: i64 = member.player_dps.parse().unwrap();
+            conn.execute_named("INSERT INTO data (dps, class_name, region, area_id, boss_id, time)
+                  VALUES (:dps, :class_name, :region, :area_id, :boss_id, :time)", &[(":dps", &dps),(":class_name", class), (":region",&region), (":area_id",&dungeon), (":boss_id",&boss), (":time",&timestamp)]).unwrap();
+          }
+          None => {}
+        };
       }
     }
   }
@@ -202,7 +220,7 @@ mod count{
       let count: i64 = row.get(0);
       let class: String = row.get(1);
       let dps: i64 = row.get(2);
-      let dps = dps * dps_steps;
+      let dps = ((dps / dps_steps) as i64) * dps_steps;
       let boss_id: i32 = row.get(3);
       let area_id: i32 = row.get(4);
       let key = (boss_id, area_id, class);
@@ -212,7 +230,9 @@ mod count{
     data
   }
 
-  fn parse_sql_result_class(rows: Result<Rows, Error>) -> String{
+  pub fn export_class(conn: &Connection, region: &str, date_start: i64, date_end: i64)-> String{
+    let mut stmt = conn.prepare("SELECT count(1), class_name from data where region = :region and time >= :date_start and time <= :date_end group by class_name").unwrap();
+    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start), (":date_end", &date_end)]);
     let mut rows = rows.unwrap();
     let mut result = String::new();
     while let Some(result_row) = rows.next() {
@@ -223,17 +243,10 @@ mod count{
       result.push_str(&line);
     }
     result
-
-  }
-
-  pub fn export_class(conn: &Connection, region: &str, date_start: i64, date_end: i64)-> String{
-    let mut stmt = conn.prepare("SELECT count(1), class from dps where region = :region and time >= :date_start and time <= :date_end group by class").unwrap();
-    let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start), (":date_end", &date_end)]);
-    parse_sql_result_class(rows)
   }
 
   pub fn export_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, dps_steps: i64, dps_max: i64)-> HashMap<(i32, i32, String), String>{
-    let mut stmt = conn.prepare("SELECT count(1), class, dps, boss_id, dungeon_id from dps where region = :region and time >= :date_start and time <= :date_end group by class, dps, boss_id, dungeon_id").unwrap();
+    let mut stmt = conn.prepare("SELECT count(1), class_name, dps, boss_id, area_id from data where region = :region and time >= :date_start and time <= :date_end group by class_name, dps, boss_id, area_id").unwrap();
     let rows = stmt.query_named(&[(":region", &region), (":date_start", &date_start), (":date_end", &date_end)]);
     let mut final_result = HashMap::new();
     let results = parse_sql_result_dps(rows, dps_steps);
@@ -254,8 +267,40 @@ mod count{
     }
     final_result
   }
-}
 
+
+  pub fn export_median_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area_id: i32, boss_id: i32)->String{
+    let mut result = String::new();
+    for c in CLASS{
+     conn.query_row_named("SELECT AVG(dps) FROM (
+      SELECT dps FROM data WHERE region = :region and time >= :start and time <= :end and class_name = :class and area_id = :area_id and boss_id = :boss_id ORDER BY dps LIMIT 2 - (
+      SELECT COUNT(*) FROM data where region = :region and time >= :start and time <= :end and class_name = :class and area_id = :area_id and boss_id = :boss_id) % 2 OFFSET (
+      SELECT (COUNT(*) - 1) / 2 FROM data where region = :region and time >= :start and time <= :end and class_name = :class and area_id = :area_id and boss_id = :boss_id))
+        ", &[(":region",&region), (":start",&date_start), (":end",&date_end),(":class",c), (":area_id",&area_id), (":boss_id",&boss_id)], |row| {
+        let median: Option<f64> = row.get(0);
+        if median.is_some(){
+        let line = format!("{}:{}\n", c, median.unwrap());
+         result.push_str(&line);
+        }
+    }).unwrap();
+    }
+    result
+  }
+
+  pub fn get_all_boss(conn: &Connection)->Vec<(i32,i32)>{
+    let mut result = Vec::new();
+    let mut stmt = conn.prepare("SELECT distinct area_id, boss_id from data ").unwrap();
+    let rows = stmt.query_named(&[]);
+    let mut rows = rows.unwrap();
+    while let Some(result_row) = rows.next() {
+      let row = result_row.unwrap();
+      let area_id: i32 = row.get(0);
+      let boss_id: i32 = row.get(1);
+      result.push((area_id, boss_id));
+    }
+    result
+  }
+}
 impl StatsLog{
   pub fn new(filename: &String) -> Vec<StatsLog>{
     // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why.
