@@ -56,7 +56,7 @@ Warrior:14115
 ```
 
 # What
-- Find recursivly all .xz files from the source folder
+- Find recursively all .xz files from the source folder
 - Create a create of each of those file. The thread decompressed them and parse them as Json
 - For each of those json, create a new processing thread. Those threads store statistics inside sqlite in memory database.
 - Export statistics to files
