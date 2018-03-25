@@ -261,16 +261,14 @@ mod count{
       }
       let time = time.unwrap();
       let table_name = get_table_name(dungeon, boss, &region, time.0, time.1);
-      let table_name_dps = format!("{}_DPS", table_name);
       let sql = "CREATE TABLE IF NOT EXISTS {} (
               id        INTEGER PRIMARY KEY,
               dps       INTEGER NOT NULL,
+              dps_stepped INTEGER NOT NULL,
               class_name TEXT NOT NULL
           )";
-      let create_table_dps = sql.replace("{}",&table_name_dps);
       let create_table = sql.replace("{}",&table_name);
       conn.execute_named(&create_table, &[]).unwrap();
-      conn.execute_named(&create_table_dps, &[]).unwrap();
 
       for member in &content.content.members{
         let class = &member.player_class;
@@ -279,12 +277,9 @@ mod count{
           Some(_) => {
             let dps: i64 = member.player_dps.parse().unwrap();
             let stepped_dps = ((dps / dps_steps) as i64) * dps_steps;
-            let sql = "INSERT INTO {} (dps, class_name) VALUES (:dps, :class_name)";
+            let sql = "INSERT INTO {} (dps, dps_stepped, class_name) VALUES (:dps, :dps_stepped ,:class_name)";
             let insert = sql.replace("{}",&table_name);
-            let insert_dps = sql.replace("{}", &table_name_dps);
-            conn.execute_named(&insert_dps, &[(":dps", &stepped_dps),(":class_name", class)]).unwrap();
-            conn.execute_named(&insert, &[(":dps", &dps),(":class_name", class)]).unwrap();
-
+            conn.execute_named(&insert, &[(":dps", &dps), (":dps_stepped", &stepped_dps),(":class_name", class)]).unwrap();
           }
           None => {}
         };
@@ -326,8 +321,7 @@ mod count{
   pub fn export_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, dps_max: i64, area:i32, boss: i32, dps_steps: i64)-> Result<HashMap<String, String>, Error>{
 
     let table_name = get_table_name(area, boss, region, date_start, date_end);
-    let table_name = format!("{}_DPS", table_name);
-    let sql = format!("SELECT count(1), class_name, dps from {} group by class_name, dps", table_name);
+    let sql = format!("SELECT count(1), class_name, dps_stepped from {} group by class_name, dps_stepped", table_name);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_named(&[]);
     let mut final_result = HashMap::new();
