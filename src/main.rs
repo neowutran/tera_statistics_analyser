@@ -139,7 +139,22 @@ fn export(conn: &Connection, target: String, time_slice: &TimeSlice, dps_max: i6
       export_class(conn, &target, region, time.0, time.1, area_boss);
       export_dps(conn, &target, region, time.0, time.1, dps_max, dps_steps, area_boss);
       export_median_dps(conn, &target, region, time.0, time.1, area_boss);
+      export_90_percentile_dps(conn, &target, region, time.0, time.1, area_boss);
     }
+  }
+}
+fn export_90_percentile_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, area_boss: &HashSet<(i32, i32)>){
+  for boss in area_boss{
+    let area_id = boss.0;
+    let boss_id = boss.1;
+    let area_boss = format!("{}-{}", area_id, boss_id);
+    let result = count::export_90_percentile_dps(conn, region, date_start, date_end, area_id, boss_id );
+    let result = match result{
+      Ok(r) => r,
+      Err(e) => {println!("export 90 percentile {:?}",e); continue;},
+    };
+    let filename = format!("{target}/percentile_90/{area_boss}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss ,region = region, start = date_start, end = date_end);
+    write_file(filename, &result);
   }
 }
 
@@ -240,6 +255,11 @@ mod count{
   use rusqlite::Connection;
   use std::collections::HashSet;
   pub const CLASS: &'static [&'static str] = &["Archer","Berserker","Brawler","Gunner","Lancer","Mystic","Ninja","Priest","Reaper","Slayer","Sorcerer","Valkyrie","Warrior"];
+
+  #[derive(Debug)]
+  pub enum CountError{
+    NoData
+  }
 
   fn get_table_name(area: i32, boss: i32, region: &str, start: i64, end: i64) -> String{
      let region = region.replace("-","_");
@@ -345,7 +365,7 @@ mod count{
   }
 
 
-  pub fn export_median_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)->Result<String, Error>{
+  pub fn export_median_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)->Result<String, CountError>{
     let mut result = String::new();
     for c in CLASS{
       let table_name = get_table_name(area, boss, region, date_start, date_end);
@@ -353,13 +373,43 @@ mod count{
       SELECT dps FROM {table} WHERE class_name = :class ORDER BY dps LIMIT 2 - (
       SELECT COUNT(*) FROM {table} where class_name = :class) % 2 OFFSET (
       SELECT (COUNT(*) - 1) / 2 FROM {table} where class_name = :class ))", table = table_name);
-      conn.query_row_named(&sql, &[(":class",c)], |row| {
+      let res = conn.query_row_named(&sql, &[(":class",c)], |row| {
         let median: Option<f64> = row.get(0);
         if median.is_some(){
           let line = format!("{}:{}\n", c, median.unwrap());
           result.push_str(&line);
         }
-      })?;
+      });
+      match res{
+        Ok(o) => o,
+        Err(e) => {println!("{:?}",e); continue;},
+      };
+    }
+    if result.is_empty(){
+      return Err(CountError::NoData);
+    }
+    Ok(result)
+  }
+
+  pub fn export_90_percentile_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)->Result<String, CountError> {
+    let mut result = String::new();
+    for c in CLASS{
+      let table_name = get_table_name(area, boss, region, date_start, date_end);
+      let sql = format!("SELECT dps FROM {table} WHERE class_name = :class ORDER BY dps ASC LIMIT 1 OFFSET (SELECT COUNT(*)  FROM {table} WHERE class_name = :class) * 9 / 10 - 1", table = table_name);
+      let res = conn.query_row_named(&sql, &[(":class",c)], |row| {
+        let percentile_90: Option<f64> = row.get(0);
+        if percentile_90.is_some(){
+          let line = format!("{}:{}\n", c, percentile_90.unwrap());
+          result.push_str(&line);
+        }
+      });
+      match res{
+        Ok(o) => o,
+        Err(e) => {println!("{:?}", e); continue;},
+      };
+    }
+    if result.is_empty() {
+      return Err(CountError::NoData);
     }
     Ok(result)
   }
@@ -376,7 +426,12 @@ impl StatsLog{
       .output()
       .expect("failed to execute process");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    serde_json::from_str(&stdout).unwrap()
+    let result = serde_json::from_str(&stdout);
+    let result = match result{
+      Ok(o)=> o,
+      Err(e)=> {println!("error file {}", filename); panic!("{:?}",e)},
+    };
+    result
   }
 }
 
