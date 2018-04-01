@@ -25,36 +25,11 @@ impl DataDetails{
   }
 }
 
-pub struct DungeonData{
-  pub class_map: HashMap<String, DataDetails>
-}
+pub type DungeonData = HashMap<String, DataDetails>;
+pub type Data = HashMap<String, DungeonData>;
+pub type GlobalData = HashMap<Fight, Data>;
 
-impl DungeonData{
-  fn new() -> DungeonData{
-    DungeonData{ class_map: HashMap::new()}
-  }
-}
-pub struct Data{
-  pub data: HashMap<String, DungeonData>
-}
-
-impl Data{
-  fn new() -> Data{
-    Data{data: HashMap::new()}
-  }
-}
-
-pub struct GlobalData{
-  pub global: HashMap<Fight, Data>
-}
-
-impl GlobalData{
-  pub fn new() -> GlobalData{
-    GlobalData{global: HashMap::new()}
-  }
-}
-
-#[derive(Eq, PartialEq, Hash, Debug)]
+#[derive(Eq, PartialEq, Hash)]
 pub struct Fight{
   pub area_id: i32,
   pub boss_id: i32,
@@ -73,7 +48,7 @@ pub fn get_key(region: &str, time: &(i64, i64)) -> String{
   format!("{}-{}-{}", region, time.0, time.1)
 }
 
-pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, mut data: Box<GlobalData>) -> Box<GlobalData> {
+pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, mut data: GlobalData) -> GlobalData {
   for content in contents{
     let timestamp = content.content.timestamp;
     let time = match time_slice.get_time_slice(timestamp){
@@ -83,14 +58,14 @@ pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, m
     let directory_vec: Vec<&str> = content.directory.split(".").collect();
     let fight = Fight::new(content.content.area_id.parse().unwrap(), content.content.boss_id.parse().unwrap());
     let key = get_key(directory_vec[0], &time);
-    let dungeon_data = data.global.entry(fight).or_insert(Data::new()).data.entry(key).or_insert(DungeonData::new());
+    let dungeon_data = data.entry(fight).or_insert(Data::new()).entry(key).or_insert(DungeonData::new());
     for member in &content.content.members{
       let class = &member.player_class;
       match CLASS.iter().find(|&&c| c == class){
         Some(_) => {
           let dps: i64 = member.player_dps.parse().unwrap();
           let stepped_dps = ((dps / dps_steps) as i64) * dps_steps;
-          let dps_details = dungeon_data.class_map.entry(class.clone()).or_insert(DataDetails::new());
+          let dps_details = dungeon_data.entry(class.clone()).or_insert(DataDetails::new());
           dps_details.add(dps, stepped_dps);
         }
         None => {}
@@ -120,7 +95,7 @@ impl ExportResult{
 pub fn export(mut raw_data: DungeonData)-> ExportResult {
   let mut result = ExportResult::new();
   for class in CLASS{
-    let mut data = match raw_data.class_map.remove(*class){
+    let mut data = match raw_data.remove(*class){
       Some(t) => t,
       None => continue,
     };
@@ -135,4 +110,3 @@ pub fn export(mut raw_data: DungeonData)-> ExportResult {
   }
   result
 }
-

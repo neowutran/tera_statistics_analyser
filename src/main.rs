@@ -21,6 +21,7 @@ use std::{
   io::prelude::*,
   sync::mpsc,
   fs,
+  collections::{HashMap},
 };
 use glob::glob;
 use threadpool::ThreadPool;
@@ -87,7 +88,7 @@ fn main() {
   }
 
   drop(tx);
-  let mut data = Box::new(process::GlobalData::new());
+  let mut data = process::GlobalData::new();
   for received in rx{
     data = process::store(&received, &time_slice, args.flag_dps_steps, data);
   }
@@ -97,12 +98,13 @@ fn main() {
   println!("duration: {} s", (end - start) as i64);
 }
 
-fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: Box<process::GlobalData> ){
-  for (fight_key, mut fight_data) in raw_data.global{
+fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: process::GlobalData ){
+  let mut class_global = HashMap::new();
+  for (fight_key, mut fight_data) in raw_data{
     for region in REGIONS{
       for time in &time_slice.all_time {
         let key = process::get_key(region, time);
-        let time_data = match fight_data.data.remove(&key){
+        let time_data = match fight_data.remove(&key){
           Some(t) => t,
           None => continue,
         };
@@ -125,6 +127,10 @@ fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, 
           write_file(filename, &result_dps);
           result_percentile_90.push_str(&format!("{}:{}\n", class, data.percentile_90));
           result_class.push_str(&format!("{}:{}\n", class, data.count));
+          let mut global_count = class_global.entry(region).or_insert(HashMap::new()).entry(format!("{}-{}", time.0, time.1)).or_insert(HashMap::new());
+          let old_value = (*global_count.entry(class.clone()).or_insert(0)) as usize;
+          global_count.insert(class.clone(), old_value + data.count);
+
           result_median.push_str(&format!("{}:{}\n", class, data.median));
         }
         let end_filename = format!("/{area_boss}/{region}/{start}-{end}.txt", area_boss = fight_key.to_str() ,region = region, start = time.0, end = time.1);
@@ -135,6 +141,25 @@ fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, 
         let filename = format!("{}/median/{}", target, end_filename);
         write_file(filename, &result_median);
       }
+    }
+  }
+
+  for region in REGIONS{
+    let class_global_region = match class_global.get(region){
+      Some(t) => t,
+      None => continue,
+    };
+    for time in &time_slice.all_time{
+      let class_global_region_time = match class_global_region.get(&format!("{}-{}", time.0, time.1)){
+        Some(t) => t,
+        None => continue,
+      };
+      let mut global_class_str = String::new();
+      for (class, count) in class_global_region_time{
+         global_class_str.push_str(&format!("{}:{}\n", class, count));
+      }
+      let filename = format!("{}/class/{}/{}-{}.txt", target, region, time.0, time.1);
+      write_file(filename, &global_class_str);
     }
   }
 }
