@@ -2,30 +2,28 @@
 extern crate serde_derive;
 extern crate docopt;
 extern crate serde_json;
-extern crate rusqlite;
 extern crate glob;
 extern crate threadpool;
 extern crate chrono;
 extern crate num_cpus;
-pub mod parse;
-pub mod process;
-pub mod time_slice;
+mod parse;
+mod process;
+mod time_slice;
 use parse::StatsLog;
 use time_slice::TimeSlice;
-use std::time::{SystemTime, UNIX_EPOCH};
 use docopt::Docopt;
-use std::sync::mpsc::{Sender, Receiver};
-use std::str;
-use std::fs::File;
-use std::path::Path;
-use std::io::prelude::*;
+use std::{
+  time::{SystemTime, UNIX_EPOCH},
+  sync::mpsc::{Sender, Receiver},
+  str,
+  fs::File,
+  path::Path,
+  io::prelude::*,
+  sync::mpsc,
+  fs,
+};
 use glob::glob;
-use std::sync::mpsc;
 use threadpool::ThreadPool;
-use std::collections::HashMap;
-use std::fs;
-use rusqlite::Connection;
-use std::collections::HashSet;
 const USAGE: &'static str = "
 Tera Statistics Analyser.
 
@@ -56,12 +54,11 @@ struct Args {
   flag_dps_max: i64,
 }
 
-/**
- * - Find recursivly all .xz files from the source folder
- * - Decompressed and parse them as Json
- * - For each of those json, store statistics inside DB.
- * - Export statistics to files
- **/
+
+/// Find recursivly all .xz files from the source folder
+/// Decompressed and parse them as Json
+/// For each of those json, store statistics inside DB.
+/// Export statistics to files
 fn main() {
   let args: Args = Docopt::new(USAGE)
     .and_then(|d| d.deserialize())
@@ -69,7 +66,6 @@ fn main() {
 
   let start = SystemTime::now();
   let start: u64 = start.duration_since(UNIX_EPOCH).unwrap().as_secs();
-  let conn = Connection::open_in_memory().unwrap();
   let time_slice = TimeSlice::new(args.flag_time_start, args.flag_time_steps);
   let (tx, rx): (Sender<Vec<StatsLog>>, Receiver<Vec<StatsLog>>) = mpsc::channel();
   let search = format!("{}/**/*.xz", args.flag_source);
@@ -91,111 +87,57 @@ fn main() {
   }
 
   drop(tx);
-  let mut area_boss = HashSet::new();
+  let mut data = process::GlobalData::new();
   for received in rx{
-    process(&conn, &received, &time_slice, args.flag_dps_steps, &mut area_boss);
+    data = process::store(&received, &time_slice, args.flag_dps_steps, data);
   }
 
-  export(&conn, args.flag_target, &time_slice, args.flag_dps_max, args.flag_dps_steps, &area_boss);
+  export(args.flag_target, &time_slice, args.flag_dps_max, args.flag_dps_steps, data);
   let end = SystemTime::now();
   let end: u64 = end.duration_since(UNIX_EPOCH).unwrap().as_secs();
   println!("duration: {} s", (end - start) as i64);
 }
 
-fn process(conn: &Connection, contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, area_boss: &mut HashSet<(i32,i32)>){
-  process::store(conn, contents, time_slice, dps_steps, area_boss);
-}
-
-fn export(conn: &Connection, target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, area_boss: &HashSet<(i32,i32)>){
-  for time in &time_slice.all_time {
+fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: process::GlobalData ){
+  for (fight_key, mut fight_data) in raw_data.global{
     for region in REGIONS{
-      export_class(conn, &target, region, time.0, time.1, area_boss);
-      export_dps(conn, &target, region, time.0, time.1, dps_max, dps_steps, area_boss);
-      export_median_dps(conn, &target, region, time.0, time.1, area_boss);
-      export_90_percentile_dps(conn, &target, region, time.0, time.1, area_boss);
+      for time in &time_slice.all_time {
+        let key = process::get_key(region, time);
+        let time_data = match fight_data.data.remove(&key){
+          Some(t) => t,
+          None => continue,
+        };
+        let result = process::export(time_data);
+        let mut result_percentile_90 = String::new();
+        let mut result_class = String::new();
+        let mut result_median = String::new();
+        for (class, data) in result.class{
+          let mut result_dps = String::new();
+          let mut dps = 0;
+          while dps < dps_max{
+            let count = match data.stepped_dps.get(&dps){
+              Some(t) => t,
+              None => &(0 as i64),
+            };
+            result_dps.push_str(&format!("{}:{}", dps, count));
+            dps += dps_steps;
+          }
+          let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{start}-{end}.txt", class = class, target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
+          write_file(filename, &result_dps);
+          result_percentile_90.push_str(&format!("{}:{}", class, data.percentile_90));
+          result_class.push_str(&format!("{}:{}", class, data.count));
+          result_median.push_str(&format!("{}:{}", class, data.median));
+        }
+        let end_filename = format!("/{area_boss}/{region}/{start}-{end}.txt", area_boss = fight_key.to_str() ,region = region, start = time.0, end = time.1);
+        let filename = format!("{}/percentile_90/{}", target, end_filename);
+        write_file(filename, &result_percentile_90);
+        let filename = format!("{}/class/{}", target, end_filename);
+        write_file(filename, &result_class);
+        let filename = format!("{}/median/{}", target, end_filename);
+        write_file(filename, &result_median);
+      }
     }
   }
-}
-fn export_90_percentile_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, area_boss: &HashSet<(i32, i32)>){
-  for boss in area_boss{
-    let area_id = boss.0;
-    let boss_id = boss.1;
-    let area_boss = format!("{}-{}", area_id, boss_id);
-    let result = process::export_90_percentile_dps(conn, region, date_start, date_end, area_id, boss_id );
-    let result = match result{
-      Ok(r) => r,
-      Err(e) => {println!("export 90 percentile {:?}",e); continue;},
-    };
-    let filename = format!("{target}/percentile_90/{area_boss}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss ,region = region, start = date_start, end = date_end);
-    write_file(filename, &result);
-  }
-}
-
-fn export_median_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, area_boss: &HashSet<(i32, i32)>){
-  for boss in area_boss{
-    let area_id = boss.0;
-    let boss_id = boss.1;
-    let area_boss = format!("{}-{}", area_id, boss_id);
-    let result = process::export_median_dps(conn, region, date_start, date_end, area_id, boss_id );
-    let result = match result{
-      Ok(r) => r,
-      Err(e) => {println!("export median {:?}",e); continue;},
-    };
-    let filename = format!("{target}/median/{area_boss}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss ,region = region, start = date_start, end = date_end);
-    write_file(filename, &result);
-  }
-}
-fn export_dps(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, dps_max: i64, dps_steps: i64, area_boss: &HashSet<(i32, i32)>){
-  for boss in area_boss{
-    let area_id = boss.0;
-    let boss_id = boss.1;
-    let area_boss = format!("{}-{}", area_id, boss_id);
-    let results = process::export_dps(conn, region, date_start, date_end, dps_max, area_id, boss_id, dps_steps );
-    let results = match results{
-      Ok(r) => r,
-      Err(e) => {println!("export dps {:?}", e); continue;},
-    };
-    for result in results{
-      let class = result.0;
-      let data = result.1;
-      let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{start}-{end}.txt", target = target, area_boss = area_boss, class = class, region = region, start = date_start, end = date_end);
-      write_file(filename, &data);
-    }
-  }
-}
-fn export_class(conn: &Connection, target: &String, region: &str, date_start: i64, date_end: i64, area_boss: &HashSet<(i32,i32)>){
-  let mut global_result = HashMap::new();
-  for boss in area_boss{
-    let area_id = boss.0;
-    let boss_id = boss.1;
-    let area_boss = format!("{}-{}", area_id, boss_id);
-    let results = process::export_class(conn, region, date_start, date_end, area_id, boss_id );
-    let results = match results{
-      Ok(o) => o,
-      Err(e) => {println!("export class {:?}",e);continue;},
-    };
-    let mut lines= String::new();
-    for result in results {
-      let class = result.0;
-      let count = result.1;
-      let class_copy = class.clone();
-      global_result.entry(class_copy).or_insert(0 as i64);
-      let stat = count + global_result.get(&class).unwrap();
-      let line = format!("{}:{}\n", &class, count);
-      global_result.insert(class, stat);
-      lines.push_str(&line);
-    }
-    let filename = format!("{target}/class/{area_boss}/{region}/{start}-{end}.txt", target = target, region = region, start = date_start, end = date_end, area_boss= area_boss);
-    write_file(filename, &lines);
-
-  }
-  let mut result = String::new();
-  for d in global_result{
-    let line = format!("{}:{}\n", d.0, d.1);
-    result.push_str(&line);
-  }
-  let filename = format!("{target}/class/{region}/{start}-{end}.txt", target = target, region = region, start = date_start, end = date_end);
-  write_file(filename, &result);
 }
 
 fn write_file(name: String, content: &String){

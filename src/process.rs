@@ -1,166 +1,199 @@
 use time_slice::TimeSlice;
 use parse::StatsLog;
-use rusqlite::Rows;
-use rusqlite::Error;
-use std::collections::HashMap;
-use rusqlite::Connection;
-use std::collections::HashSet;
+use std::{
+  time::{SystemTime, UNIX_EPOCH},
+  collections::{HashMap},
+};
 pub const CLASS: &'static [&'static str] = &["Archer","Berserker","Brawler","Gunner","Lancer","Mystic","Ninja","Priest","Reaper","Slayer","Sorcerer","Valkyrie","Warrior"];
 
-#[derive(Debug)]
-pub enum CountError{
-  NoData
+#[derive(Clone, Debug)]
+pub struct DataDetails{
+  pub dps: Vec<i64>,
+  pub stepped_dps: HashMap<i64, i64>,
 }
 
-fn get_table_name(area: i32, boss: i32, region: &str, start: i64, end: i64) -> String{
-  let region = region.replace("-","_");
-  format!("{region}_{area}_{boss}_{start}_{end}", boss=boss, area = area, region = region, start = start, end = end)
-}
+impl DataDetails{
+  fn new() -> DataDetails{
+    DataDetails{dps:Vec::new(), stepped_dps: HashMap::new()}
+  }
 
-pub fn store(conn: &Connection, contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, area_boss: &mut HashSet<(i32, i32)>) {
-  for content in contents{
-    let directory_split = content.directory.split(".");
-    let directory_vec: Vec<&str> = directory_split.collect();
-    let region = String::from(directory_vec[0]);
-    let timestamp = content.content.timestamp;
-    let dungeon:i32 = content.content.area_id.parse().unwrap();
-    let boss:i32 = content.content.boss_id.parse().unwrap();
-    area_boss.insert((dungeon,boss));
-    let time = time_slice.get_time_slice(timestamp);
-    if !time.is_some(){
-      continue;
+  fn add(&mut self, new_dps: i64, new_stepped: i64){
+    self.add_dps(new_dps);
+    self.add_stepped_dps(new_stepped, 1);
+  }
+
+  fn size(&self) -> usize{
+    self.dps.len()
+  }
+
+  fn add_dps(&mut self, new_dps: i64){
+    self.dps.push(new_dps);
+  }
+
+  fn add_stepped_dps(&mut self, new_stepped: i64, quantity: i64){
+    let old_value = *self.stepped_dps.entry(new_stepped).or_insert(0);
+    self.stepped_dps.insert(new_stepped, old_value + quantity);
+  }
+
+  fn sort(&mut self){
+    self.dps.sort();
+  }
+
+  pub fn merge(&mut self, other: DataDetails){
+    /*
+    self.dps.append(&other.dps);
+    for (step, count) in other.stepped_dps.iter(){
+      self.add_stepped_dps(*step, *count);
     }
-    let time = time.unwrap();
-    let table_name = get_table_name(dungeon, boss, &region, time.0, time.1);
-    let sql = "CREATE TABLE IF NOT EXISTS {} (
-              id        INTEGER PRIMARY KEY,
-              dps       INTEGER NOT NULL,
-              dps_stepped INTEGER NOT NULL,
-              class_name TEXT NOT NULL
-          )";
-    let create_table = sql.replace("{}",&table_name);
-    conn.execute_named(&create_table, &[]).unwrap();
+    */
+  }
+}
 
+#[derive(Clone, Debug)]
+pub struct DungeonData{
+  pub class_map: HashMap<String, DataDetails>
+}
+
+impl DungeonData{
+  fn new() -> DungeonData{
+    DungeonData{ class_map: HashMap::new()}
+  }
+
+  pub fn merge(&mut self, other: DungeonData){
+    for (class, data) in other.class_map.iter(){
+      self.class_map.entry(class.clone()).or_insert(DataDetails::new()).merge(data.clone());
+    }
+  }
+}
+
+#[derive(Clone, Debug)]
+pub struct Data{
+  pub data: HashMap<String, DungeonData>
+}
+
+impl Data{
+  fn new() -> Data{
+    Data{data: HashMap::new()}
+  }
+
+  pub fn merge(&mut self, other: Data){
+    for (id, data) in other.data.iter(){
+      self.data.entry(id.clone()).or_insert(DungeonData::new()).merge(data.clone());
+    }
+  }
+
+}
+
+#[derive(Clone, Debug)]
+pub struct GlobalData{
+  pub global: HashMap<Fight, Data>
+}
+
+impl GlobalData{
+ pub fn new() -> GlobalData{
+    GlobalData{global: HashMap::new()}
+  }
+
+  pub fn get_boss(&self) -> Vec<&Fight>{
+    let mut result = Vec::new();
+    for key in self.global.keys(){
+      result.push(key);
+    }
+    result
+  }
+
+ pub fn merge(&mut self, other: GlobalData){
+    for (fight, data) in other.global.iter(){
+      self.global.entry(*fight).or_insert(Data::new()).merge(data.clone());
+    }
+  }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Copy)]
+pub struct Fight{
+  pub area_id: i32,
+  pub boss_id: i32,
+}
+
+impl Fight{
+  fn new(area_id: i32, boss_id: i32) -> Fight{
+    Fight{area_id: area_id, boss_id: boss_id }
+  }
+  pub fn to_str(&self)-> String{
+    format!("{}-{}", self.area_id, self.boss_id)
+  }
+}
+
+pub fn get_key(region: &str, time: &(i64, i64)) -> String{
+  format!("{}-{}-{}", region, time.0, time.1)
+}
+
+pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, mut data: GlobalData) -> GlobalData {
+  let start = SystemTime::now();
+  let start = start.duration_since(UNIX_EPOCH).unwrap();
+
+  for content in contents{
+    let timestamp = content.content.timestamp;
+    let time = match time_slice.get_time_slice(timestamp){
+      Some(t) => t,
+      None => continue,
+    };
+    let directory_vec: Vec<&str> = content.directory.split(".").collect();
+    let fight = Fight::new(content.content.area_id.parse().unwrap(), content.content.boss_id.parse().unwrap());
+    let key = get_key(directory_vec[0], &time);
+    let dungeon_data = data.global.entry(fight).or_insert(Data::new()).data.entry(key).or_insert(DungeonData::new());
     for member in &content.content.members{
       let class = &member.player_class;
-      let found = CLASS.iter().find(|&&c| c == class);
-      match found{
+      match CLASS.iter().find(|&&c| c == class){
         Some(_) => {
           let dps: i64 = member.player_dps.parse().unwrap();
           let stepped_dps = ((dps / dps_steps) as i64) * dps_steps;
-          let sql = "INSERT INTO {} (dps, dps_stepped, class_name) VALUES (:dps, :dps_stepped ,:class_name)";
-          let insert = sql.replace("{}",&table_name);
-          conn.execute_named(&insert, &[(":dps", &dps), (":dps_stepped", &stepped_dps),(":class_name", class)]).unwrap();
+          let dps_details = dungeon_data.class_map.entry(class.clone()).or_insert(DataDetails::new());
+          dps_details.add(dps, stepped_dps);
         }
         None => {}
       };
     }
   }
-}
-
-fn parse_sql_result_dps(rows: Result<Rows, Error>) -> HashMap<String, HashMap<i64, i64>>{
-  let mut rows = rows.unwrap();
-  let mut data = HashMap::new();
-  while let Some(result_row) = rows.next() {
-    let row = result_row.unwrap();
-    let count: i64 = row.get(0);
-    let class: String = row.get(1);
-    let dps: i64 = row.get(2);
-    let stat = data.entry(class).or_insert(HashMap::new());
-    stat.insert(dps, count);
-  }
+ let end = SystemTime::now();
+  let end = end.duration_since(UNIX_EPOCH).unwrap();
+  println!("duration: {},{} s", (end.as_secs() - start.as_secs()) as i64,(end.subsec_nanos() - start.subsec_nanos()) as i64 );
   data
 }
 
-pub fn export_class(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)-> Result<HashMap<String, i64>,Error>{
-
-  let table_name = get_table_name(area, boss, region, date_start, date_end);
-  let sql = format!("SELECT count(1), class_name from {} group by class_name", table_name);
-  let mut stmt = conn.prepare(&sql)?;
-  let rows = stmt.query_named(&[]);
-  let mut rows = rows.unwrap();
-  let mut result = HashMap::new();
-  while let Some(result_row) = rows.next() {
-    let row = result_row.unwrap();
-    let count: i64 = row.get(0);
-    let name: String = row.get(1);
-    result.insert(name, count);
-  }
-  Ok(result)
+pub struct ExportResult{
+  pub class: HashMap<String, ExportClass>
 }
 
-pub fn export_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, dps_max: i64, area:i32, boss: i32, dps_steps: i64)-> Result<HashMap<String, String>, Error>{
-
-  let table_name = get_table_name(area, boss, region, date_start, date_end);
-  let sql = format!("SELECT count(1), class_name, dps_stepped from {} group by class_name, dps_stepped", table_name);
-  let mut stmt = conn.prepare(&sql)?;
-  let rows = stmt.query_named(&[]);
-  let mut final_result = HashMap::new();
-  let results = parse_sql_result_dps(rows);
-  for result in results{
-    let class = result.0;
-    let data = result.1;
-    let mut data_str = String::new();
-    let mut dps = 0;
-    while dps <= dps_max {
-      let mut count: i64 = 0;
-      if data.contains_key(&dps) {
-        count += data.get(&dps).unwrap();
-      }
-      data_str.push_str(&format!("{}:{}\n", dps, count));
-      dps += dps_steps;
-    }
-    final_result.insert(class, data_str);
-  }
-  Ok(final_result)
+pub struct ExportClass{
+  pub count: usize,
+  pub median: i64,
+  pub percentile_90: i64,
+  pub stepped_dps: HashMap<i64,i64>
 }
 
+impl ExportResult{
+  fn new() -> ExportResult{
+    ExportResult{class: HashMap::new()}
+  }
+}
 
-pub fn export_median_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)->Result<String, CountError>{
-  let mut result = String::new();
-  for c in CLASS{
-    let table_name = get_table_name(area, boss, region, date_start, date_end);
-    let sql = format!("SELECT AVG(dps) FROM (
-      SELECT dps FROM {table} WHERE class_name = :class ORDER BY dps LIMIT 2 - (
-      SELECT COUNT(*) FROM {table} where class_name = :class) % 2 OFFSET (
-      SELECT (COUNT(*) - 1) / 2 FROM {table} where class_name = :class ))", table = table_name);
-    let res = conn.query_row_named(&sql, &[(":class",c)], |row| {
-      let median: Option<f64> = row.get(0);
-      if median.is_some(){
-        let line = format!("{}:{}\n", c, median.unwrap());
-        result.push_str(&line);
-      }
-    });
-    match res{
-      Ok(o) => o,
-      Err(e) => {println!("{:?}",e); continue;},
+pub fn export(mut raw_data: DungeonData)-> ExportResult {
+  let mut result = ExportResult::new();
+  for class in CLASS{
+    let mut data = match raw_data.class_map.remove(*class){
+      Some(t) => t,
+      None => continue,
     };
+    data.sort();
+    result.class.insert(String::from(*class),
+                        ExportClass{
+                          count: data.size(),
+                          median: data.dps[(data.size() / 2 ) as usize],
+                          percentile_90: data.dps[(data.size() / 2) as usize],
+                          stepped_dps: data.stepped_dps
+                        });
   }
-  if result.is_empty(){
-    return Err(CountError::NoData);
-  }
-  Ok(result)
+  result
 }
 
-pub fn export_90_percentile_dps(conn: &Connection, region: &str, date_start: i64, date_end: i64, area: i32, boss: i32)->Result<String, CountError> {
-  let mut result = String::new();
-  for c in CLASS{
-    let table_name = get_table_name(area, boss, region, date_start, date_end);
-    let sql = format!("SELECT dps FROM {table} WHERE class_name = :class ORDER BY dps ASC LIMIT 1 OFFSET (SELECT COUNT(*)  FROM {table} WHERE class_name = :class) * 9 / 10 - 1", table = table_name);
-    let res = conn.query_row_named(&sql, &[(":class",c)], |row| {
-      let percentile_90: Option<f64> = row.get(0);
-      if percentile_90.is_some(){
-        let line = format!("{}:{}\n", c, percentile_90.unwrap());
-        result.push_str(&line);
-      }
-    });
-    match res{
-      Ok(o) => o,
-      Err(e) => {println!("{:?}", e); continue;},
-    };
-  }
-  if result.is_empty() {
-    return Err(CountError::NoData);
-  }
-  Ok(result)
-}

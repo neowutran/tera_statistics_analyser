@@ -8,8 +8,7 @@ impl TimeSlice{
   pub fn get_time_slice(&self,time: i64) -> Option<(i64,i64)>{
     for t in &self.all_time {
       if time >= t.0 && time <= t.1{
-        let res: Option<(i64,i64)> = Some((t.0, t.1));
-        return res;
+        return Some((t.0, t.1));
       }
     }
     None

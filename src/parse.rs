@@ -11,8 +11,9 @@
         .arg(command)
         .output()
         .expect("failed to execute process");
+      let err = output.stderr;
       let stdout = String::from_utf8(output.stdout).unwrap();
-      serde_json::from_str(&stdout).expect(&format!("Error reading file {}", filename))
+      serde_json::from_str(&stdout).expect(&format!("Error reading file {}: {:?}", filename, err))
     }
   }
 
