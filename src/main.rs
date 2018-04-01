@@ -87,18 +87,17 @@ fn main() {
   }
 
   drop(tx);
-  let mut data = process::GlobalData::new();
+  let mut data = Box::new(process::GlobalData::new());
   for received in rx{
     data = process::store(&received, &time_slice, args.flag_dps_steps, data);
   }
-
   export(args.flag_target, &time_slice, args.flag_dps_max, args.flag_dps_steps, data);
   let end = SystemTime::now();
   let end: u64 = end.duration_since(UNIX_EPOCH).unwrap().as_secs();
   println!("duration: {} s", (end - start) as i64);
 }
 
-fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: process::GlobalData ){
+fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: Box<process::GlobalData> ){
   for (fight_key, mut fight_data) in raw_data.global{
     for region in REGIONS{
       for time in &time_slice.all_time {
@@ -119,14 +118,14 @@ fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, 
               Some(t) => t,
               None => &(0 as i64),
             };
-            result_dps.push_str(&format!("{}:{}", dps, count));
+            result_dps.push_str(&format!("{}:{}\n", dps, count));
             dps += dps_steps;
           }
           let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{start}-{end}.txt", class = class, target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
           write_file(filename, &result_dps);
-          result_percentile_90.push_str(&format!("{}:{}", class, data.percentile_90));
-          result_class.push_str(&format!("{}:{}", class, data.count));
-          result_median.push_str(&format!("{}:{}", class, data.median));
+          result_percentile_90.push_str(&format!("{}:{}\n", class, data.percentile_90));
+          result_class.push_str(&format!("{}:{}\n", class, data.count));
+          result_median.push_str(&format!("{}:{}\n", class, data.median));
         }
         let end_filename = format!("/{area_boss}/{region}/{start}-{end}.txt", area_boss = fight_key.to_str() ,region = region, start = time.0, end = time.1);
         let filename = format!("{}/percentile_90/{}", target, end_filename);
