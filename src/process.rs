@@ -25,7 +25,17 @@ impl DataDetails{
   }
 }
 
-pub type DungeonData = HashMap<String, DataDetails>;
+pub struct DungeonData{
+  pub members : HashMap<String, DataDetails>,
+  pub healers_number: HashMap<i8, i64>,
+}
+
+impl DungeonData{
+  fn new() -> DungeonData{
+    DungeonData{members:HashMap::new(), healers_number: HashMap::new()}
+  }
+}
+
 pub type Data = HashMap<String, DungeonData>;
 pub type GlobalData = HashMap<Fight, Data>;
 
@@ -59,24 +69,31 @@ pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, m
     let fight = Fight::new(content.content.area_id.parse().unwrap(), content.content.boss_id.parse().unwrap());
     let key = get_key(directory_vec[0], &time);
     let dungeon_data = data.entry(fight).or_insert(Data::new()).entry(key).or_insert(DungeonData::new());
+    let mut healers_number: i8 = 0;
     for member in &content.content.members{
       let class = &member.player_class;
       match CLASS.iter().find(|&&c| c == class){
         Some(_) => {
           let dps: i64 = member.player_dps.parse().unwrap();
           let stepped_dps = ((dps / dps_steps) as i64) * dps_steps;
-          let dps_details = dungeon_data.entry(class.clone()).or_insert(DataDetails::new());
+          let dps_details = dungeon_data.members.entry(class.clone()).or_insert(DataDetails::new());
           dps_details.add(dps, stepped_dps);
+          if class == "Mystic" || class == "Priest" {
+            healers_number += 1;
+          }
         }
         None => {}
       };
     }
+    let mut old_value = dungeon_data.healers_number.entry(healers_number).or_insert(0);
+    *old_value += 1;
   }
   data
 }
 
 pub struct ExportResult{
-  pub class: HashMap<String, ExportClass>
+  pub class: HashMap<String, ExportClass>,
+  pub healers_number: HashMap<i8, i64>,
 }
 
 pub struct ExportClass{
@@ -88,14 +105,15 @@ pub struct ExportClass{
 
 impl ExportResult{
   fn new() -> ExportResult{
-    ExportResult{class: HashMap::new()}
+    ExportResult{class: HashMap::new(), healers_number:HashMap::new()}
   }
 }
 
 pub fn export(mut raw_data: DungeonData)-> ExportResult {
   let mut result = ExportResult::new();
+  result.healers_number = raw_data.healers_number;
   for class in CLASS{
-    let mut data = match raw_data.remove(*class){
+    let mut data = match raw_data.members.remove(*class){
       Some(t) => t,
       None => continue,
     };

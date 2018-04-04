@@ -112,6 +112,12 @@ fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, 
         let mut result_percentile_90 = String::new();
         let mut result_class = String::new();
         let mut result_median = String::new();
+        let mut result_healers_number = String::new();
+        for ( healers_number, count ) in result.healers_number{
+          result_healers_number.push_str(&format!("{}:{}\n", healers_number, count));
+        }
+        let filename = format!("{target}/healers/{area_boss}/{region}/{start}-{end}.txt", target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
+        write_file(filename, &result_healers_number);
         for (class, data) in result.class{
           let mut result_dps = String::new();
           let mut dps = 0;
