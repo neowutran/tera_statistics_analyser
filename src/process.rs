@@ -122,7 +122,7 @@ pub fn export(mut raw_data: DungeonData)-> ExportResult {
     ExportClass{
       count: data.size(),
       median: data.dps[(data.size() / 2 ) as usize],
-      percentile_90: data.dps[(data.size() / 2) as usize],
+      percentile_90: data.dps[(data.size() * (9/10)) as usize],
       stepped_dps: data.stepped_dps
     });
   }
