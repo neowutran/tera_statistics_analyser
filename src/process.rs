@@ -17,8 +17,7 @@ impl DataDetails{
 
   fn add(&mut self, new_dps: i64, new_stepped: i64){
     self.dps.push(new_dps);
-    let old_value = *self.stepped_dps.entry(new_stepped).or_insert(0);
-    self.stepped_dps.insert(new_stepped, old_value + 1);
+    *(self.stepped_dps.entry(new_stepped).or_insert(0)) +=1;
   }
   fn size(&self) -> usize{
     self.dps.len()
@@ -85,8 +84,7 @@ pub fn store(contents: &Vec<StatsLog>, time_slice: &TimeSlice, dps_steps: i64, m
         None => {}
       };
     }
-    let mut old_value = dungeon_data.healers_number.entry(healers_number).or_insert(0);
-    *old_value += 1;
+    *(dungeon_data.healers_number.entry(healers_number).or_insert(0)) += 1;
   }
   data
 }
