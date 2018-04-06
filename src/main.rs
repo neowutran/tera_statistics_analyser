@@ -49,10 +49,10 @@ const REGIONS: &'static [&'static str] = &["EU", "NA", "KR", "JP", "RU", "TW", "
 struct Args {
   flag_source: String,
   flag_target: String,
-  flag_time_start: i64,
-  flag_time_steps: i64,
-  flag_dps_steps: i64,
-  flag_dps_max: i64,
+  flag_time_start: u64,
+  flag_time_steps: u32,
+  flag_dps_steps: u32,
+  flag_dps_max: u32,
 }
 
 
@@ -90,7 +90,7 @@ fn main() {
   drop(tx);
   let mut data = process::GlobalData::new();
   for received in rx{
-    data = process::store(&received, &time_slice, args.flag_dps_steps, data);
+    data = process::store(received, &time_slice, args.flag_dps_steps, data);
   }
   export(args.flag_target, &time_slice, args.flag_dps_max, args.flag_dps_steps, data);
   let end = SystemTime::now();
@@ -98,7 +98,7 @@ fn main() {
   println!("duration: {} s", (end - start) as i64);
 }
 
-fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, raw_data: process::GlobalData ){
+fn export(target: String, time_slice: &TimeSlice, dps_max: u32, dps_steps: u32, raw_data: process::GlobalData ){
   let mut class_global = HashMap::new();
   for (fight_key, mut fight_data) in raw_data{
     for region in REGIONS{
@@ -118,33 +118,34 @@ fn export(target: String, time_slice: &TimeSlice, dps_max: i64, dps_steps: i64, 
         }
         let filename = format!("{target}/healers/{area_boss}/{region}/{start}-{end}.txt", target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
         write_file(filename, &result_healers_number);
+        let filename = format!("{target}/clear_time/{area_boss}/{region}/{start}-{end}.txt", target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
+        write_file(filename, &format!("{};{}", result.clear_time_median, result.clear_time_percentile_90));
         for (class, data) in result.class{
           let mut result_dps = String::new();
           let mut dps = 0;
           while dps < dps_max{
             let count = match data.stepped_dps.get(&dps){
               Some(t) => t,
-              None => &(0 as i64),
+              None => &(0 as u32),
             };
             result_dps.push_str(&format!("{}:{}\n", dps, count));
             dps += dps_steps;
           }
           let filename = format!("{target}/dps/{area_boss}/{class}/{region}/{start}-{end}.txt", class = class, target = target, region = region, start = time.0, end = time.1, area_boss= fight_key.to_str());
           write_file(filename, &result_dps);
-          result_percentile_90.push_str(&format!("{}:{}\n", class, data.percentile_90));
+          result_percentile_90.push_str(&format!("{}:{}\n", class, data.dps_percentile_90));
           result_class.push_str(&format!("{}:{}\n", class, data.count));
           let mut global_count = class_global.entry(region).or_insert(HashMap::new()).entry(format!("{}-{}", time.0, time.1)).or_insert(HashMap::new());
           let old_value = (*global_count.entry(class.clone()).or_insert(0)) as usize;
           global_count.insert(class.clone(), old_value + data.count);
-
-          result_median.push_str(&format!("{}:{}\n", class, data.median));
+          result_median.push_str(&format!("{}:{}\n", class, data.dps_median));
         }
         let end_filename = format!("/{area_boss}/{region}/{start}-{end}.txt", area_boss = fight_key.to_str() ,region = region, start = time.0, end = time.1);
-        let filename = format!("{}/percentile_90/{}", target, end_filename);
+        let filename = format!("{}/dps_percentile_90/{}", target, end_filename);
         write_file(filename, &result_percentile_90);
         let filename = format!("{}/class/{}", target, end_filename);
         write_file(filename, &result_class);
-        let filename = format!("{}/median/{}", target, end_filename);
+        let filename = format!("{}/dps_median/{}", target, end_filename);
         write_file(filename, &result_median);
       }
     }

@@ -37,9 +37,9 @@
     //debuff_uptime: Vec<Value>,
     //#[serde(rename="encounterUnixEpoch")]
     //encounter_unix_epoch: i64,
-    //#[serde(rename="fightDuration")]
-    //fight_duration: String,
-    pub timestamp: i64,
+    #[serde(rename="fightDuration")]
+    pub fight_duration: String,
+    pub timestamp: u64,
     pub members: Vec<Members>,
     //#[serde(rename="meterName")]
     //meter_name: String,
