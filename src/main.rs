@@ -19,7 +19,6 @@ use process::Class;
 use std::{fs, str, collections::HashMap, fs::File, io::prelude::*, path::Path, sync::mpsc,
           sync::mpsc::{Receiver, Sender}, time::{SystemTime, UNIX_EPOCH}};
 use threadpool::ThreadPool;
-const BEGINNING_OF_TIME: u64 = 1519858800;
 const USAGE: &'static str = "
 Tera Statistics Analyser.
 
@@ -62,13 +61,13 @@ fn main() {
     //TODO find a way to put these in const static, maybe wait until the rust compiler can handle
     //that
     let region_map = hashmap![
-    "EU" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "NA" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "KR" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "JP" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "RU" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "TW" => hashmap!["origin" => (BEGINNING_OF_TIME, u64::max_value())],
-    "THA" => hashmap!["origin"=> (BEGINNING_OF_TIME, u64::max_value())]
+    "EU" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "NA" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "KR" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "JP" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "RU" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "TW" => hashmap!["origin" => (u64::min_value(), u64::max_value())],
+    "THA" => hashmap!["origin"=> (u64::min_value(), u64::max_value())]
   ];
     let class_map = bidir_map!(
       "Archer" => Class::Archer,
