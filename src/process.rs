@@ -1,7 +1,6 @@
 use bidir_map::BidirMap;
 use parse::StatsLog;
 use std::collections::HashMap;
-use time_slice::TimeSlice;
 
 #[derive(PartialEq, Hash, Eq, Clone)]
 pub enum Class {
@@ -76,29 +75,47 @@ impl Fight {
     }
 }
 
-pub fn get_key(region: &str, time: &(u64, u64)) -> String {
-    format!("{}-{}-{}", region, time.0, time.1)
+pub fn get_key(region: &str, patch_name: &str) -> String {
+    format!("{}-{}", region, patch_name)
+}
+
+fn get_patch_name(
+    region_map: &HashMap<&str, HashMap<&str, (u64, u64)>>,
+    region: &str,
+    timestamp: u64,
+) -> Option<String> {
+    let region_data = match region_map.get(region) {
+        Some(t) => t,
+        None => return None,
+    };
+    for (patch_name, patch_date) in region_data {
+        if patch_date.0 < timestamp && patch_date.1 > timestamp {
+            return Some(patch_name.to_string());
+        }
+    }
+    None
 }
 
 pub fn store(
     contents: Vec<StatsLog>,
-    time_slice: &TimeSlice,
     dps_steps: u32,
-    mut data: GlobalData,
+    data: &mut GlobalData,
     class_map: &BidirMap<&str, Class>,
-) -> GlobalData {
+    region_map: &HashMap<&str, HashMap<&str, (u64, u64)>>,
+) {
     for content in contents {
+        let directory_vec: Vec<&str> = content.directory.split(".").collect();
+        let region = directory_vec[0];
         let timestamp = content.content.timestamp;
-        let time = match time_slice.get_time_slice(timestamp) {
+        let patch_name = match get_patch_name(region_map, region, timestamp) {
             Some(t) => t,
             None => continue,
         };
-        let directory_vec: Vec<&str> = content.directory.split(".").collect();
         let fight = Fight::new(
             content.content.area_id.parse().unwrap(),
             content.content.boss_id.parse().unwrap(),
         );
-        let key = get_key(directory_vec[0], &time);
+        let key = get_key(region, &patch_name);
         let dungeon_data = data.entry(fight)
             .or_insert(Data::new())
             .entry(key)
@@ -128,7 +145,6 @@ pub fn store(
             .entry(healers_number)
             .or_insert(0)) += 1;
     }
-    data
 }
 
 pub struct ExportResult {

@@ -1,19 +1,23 @@
-use std::process::Command;
 extern crate serde_json;
+extern crate xz2;
+use self::xz2::read;
+use std::fs::File;
+use std::io::prelude::*;
 impl StatsLog {
     pub fn new(filename: &String) -> Vec<StatsLog> {
-        // Rust-lzma crash on magic byte detection for XZ. So back to system version until I found why.
-        // To improve and find why rust-lzma doesn't work.
-        let mut command = String::from("unxz --stdout ");
-        command.push_str(&filename);
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .output()
-            .expect("failed to execute process");
-        let err = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        serde_json::from_str(&stdout).expect(&format!("Error reading file {}: {}", filename, err))
+        let mut decompressed = Vec::new();
+        {
+            let mut compressed = Vec::new();
+            File::open(filename)
+                .unwrap()
+                .read_to_end(&mut compressed)
+                .unwrap();
+            read::XzDecoder::new(&*compressed)
+                .read_to_end(&mut decompressed)
+                .unwrap();
+        }
+        serde_json::from_str(&String::from_utf8(decompressed).unwrap())
+            .expect(&format!("Error parsing json {}", filename))
     }
 }
 
