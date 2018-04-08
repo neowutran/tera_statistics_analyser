@@ -66,8 +66,8 @@ fn main() {
     "KR" => hashmap!["69" => (1515024000, 1522281600), "71"=> (1522281600, u64::max_value())],
     "JP" => hashmap!["66" => (1520380800, u64::max_value())],
     "RU" => hashmap!["66" => (1520899200, 1524009600), "67" => (1524009600, u64::max_value())],
-    "TW" => hashmap!["66" => (u64::min_value(), 1522886400), "67" => (1522886400, u64::max_value())],
-    "THA" => hashmap!["66"=> (1521417600, u64::max_value())]
+    "THA" => hashmap!["66" => (u64::min_value(), 1522886400), "67" => (1522886400, u64::max_value())],
+    "TW" => hashmap!["66"=> (1521417600, u64::max_value())]
   ];
     let class_map = bidir_map!(
       "Archer" => Class::Archer,
@@ -76,7 +76,7 @@ fn main() {
       "Gunner" => Class::Gunner,
       "Lancer" => Class::Lancer,
       "Mystic" => Class::Mystic,
-      "Ninja" => Class::Ninja,
+     "Ninja" => Class::Ninja,
       "Priest" => Class::Priest,
       "Reaper" => Class::Reaper,
       "Slayer" => Class::Slayer,
