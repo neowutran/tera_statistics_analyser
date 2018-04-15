@@ -29,7 +29,7 @@ Usage:
 Options:
   -h --help                         Show this screen.
   --dps-steps <dps_steps>           Steps for dps [default: 100000]
-  --dps-max <dps_max>               Max plausible dps [default: 5000000]
+  --dps-max <dps_max>               Max plausible dps [default: 6000000]
 ";
 
 #[derive(Deserialize)]
@@ -64,10 +64,10 @@ fn main() {
     "EU" => hashmap!["66" => (1520330400,1523354400), "67" => (1523354400, u64::max_value())],
     "NA" => hashmap!["66" => (1520964000, 1523988000), "67"=>(1523988000, u64::max_value())],
     "KR" => hashmap!["69" => (1515024000, 1522281600), "71"=> (1522281600, u64::max_value())],
-    "JP" => hashmap!["66" => (1520380800, u64::max_value())],
+    "JP" => hashmap!["66" => (1520380800, 1523434273), "67" => (1523434273, u64::max_value())],
     "RU" => hashmap!["66" => (1520899200, 1524009600), "67" => (1524009600, u64::max_value())],
     "THA" => hashmap!["66" => (u64::min_value(), 1522886400), "67" => (1522886400, u64::max_value())],
-    "TW" => hashmap!["66"=> (1521417600, u64::max_value())]
+    "TW" => hashmap!["66"=> (1521417600, 1523520673), "67"=>(1523520673, u64::max_value())]
   ];
     let class_map = bidir_map!(
       "Archer" => Class::Archer,
