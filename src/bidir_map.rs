@@ -1,4 +1,6 @@
-use std::{collections::{HashMap, hash_map::Keys}, hash::Hash};
+use std::{
+    collections::{hash_map::Keys, HashMap}, hash::Hash,
+};
 macro_rules! bidir_map {
 	(@single $($x:tt)*) => (());
 	(@count $($rest:expr),*) => (<[()]>::len(&[$(bidir_map!(@single $rest)),*]));

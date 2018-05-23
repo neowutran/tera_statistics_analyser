@@ -4,20 +4,21 @@ use self::xz2::read;
 use std::fs::File;
 use std::io::prelude::*;
 impl StatsLog {
-    pub fn new(filename: &String) -> Vec<StatsLog> {
+    pub fn new(filename: &String) -> Result<Vec<StatsLog>, String> {
         let mut decompressed = Vec::new();
         {
             let mut compressed = Vec::new();
             File::open(filename)
                 .unwrap()
                 .read_to_end(&mut compressed)
-                .unwrap();
+                .map_err(|_| format!("Unable to open {}", filename))?;
             read::XzDecoder::new(&*compressed)
                 .read_to_end(&mut decompressed)
-                .unwrap();
+                .map_err(|_| format!("Unable to decompress {}", filename))?;
         }
-        serde_json::from_str(&String::from_utf8(decompressed).unwrap())
-            .expect(&format!("Error parsing json {}", filename))
+        let result = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
+            .map_err(|_| format!("Unable to parse {}", filename))?;
+        Ok(result)
     }
 }
 
@@ -79,10 +80,10 @@ pub struct Members {
     pub player_dps: String,
     //#[serde(rename="playerId")]
     //player_id:u32,
-    //#[serde(rename="playerName")]
-    //player_name: String,
-    //#[serde(rename="playerServer")]
-    //player_server: String,
+    //#[serde(rename = "playerName")]
+    //pub player_name: String,
+    #[serde(rename = "playerServer")]
+    pub player_server: String,
     //#[serde(rename="playerTotalDamage")]
     //player_total_damage: String,
     //#[serde(rename="playerTotalDamagePercentage")]
@@ -96,21 +97,21 @@ pub struct Members {
 #[derive(Deserialize)]
 pub struct SkillLog {
     //#[serde(rename="skillAverageCrit")]
-    //skill_average_crit: String,
-    //#[serde(rename="skillAverageWhite")]
-    //skill_average_white: String,
-    //#[serde(rename="skillCritRate")]
-    //skill_crit_rate: String,
-    //#[serde(rename="skillDamagePercent")]
-    //skill_damage_percent: String,
-    //#[serde(rename="skillHighestCrit")]
-    //skill_highest_crit: String,
-    //#[serde(rename="skillHits")]
-    //skill_hits: String,
-    //#[serde(rename="skillId")]
-    //skill_id: String,
-    //#[serde(rename="skillLowestCrit")]
-    //skill_lowest_crit: String,
-    //#[serde(rename="skillTotalDamage")]
-    //skill_total_damage: String,
+//skill_average_crit: String,
+//#[serde(rename="skillAverageWhite")]
+//skill_average_white: String,
+//#[serde(rename="skillCritRate")]
+//skill_crit_rate: String,
+//#[serde(rename="skillDamagePercent")]
+//skill_damage_percent: String,
+//#[serde(rename="skillHighestCrit")]
+//skill_highest_crit: String,
+//#[serde(rename="skillHits")]
+//skill_hits: String,
+//#[serde(rename="skillId")]
+//skill_id: String,
+//#[serde(rename="skillLowestCrit")]
+//skill_lowest_crit: String,
+//#[serde(rename="skillTotalDamage")]
+//skill_total_damage: String,
 }

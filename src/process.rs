@@ -129,7 +129,11 @@ pub fn store(
                 Some(c) => c,
                 None => continue,
             };
-            let dps: u32 = member.player_dps.parse().unwrap();
+            let mut dps: u32 = 0;
+            match member.player_dps.parse() {
+                Ok(value) => dps = value,
+                Err(_) => {}
+            };
             let stepped_dps = ((dps / dps_steps) as u32) * dps_steps;
             if class == &Class::Mystic || class == &Class::Priest {
                 healers_number += 1;

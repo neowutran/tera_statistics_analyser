@@ -92,15 +92,16 @@ fn main() {
     let full_cpus = num_cpus::get();
     let mut usable_cpus = full_cpus - 1;
     println!("Number of virtual core: {}", full_cpus);
-    if usable_cpus <= 1 {
+    //if usable_cpus <= 1 {
         usable_cpus = 1;
-    }
+    //}
     let thread_pool_decompress: ThreadPool = ThreadPool::new(usable_cpus);
     for entry in glob(&search).expect("Failed to read glob pattern") {
         let os_string = entry.unwrap().into_os_string();
         let string = os_string.into_string().unwrap();
         let thread_tx = tx.clone();
         thread_pool_decompress.execute(move || {
+            println!("{}",&string);
             match StatsLog::new(&string) {
                 Ok(data) => thread_tx.send(data).unwrap(),
                 Err(err) => {
