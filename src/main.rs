@@ -31,7 +31,7 @@ Usage:
 Options:
   -h --help                         Show this screen.
   --dps-steps <dps_steps>           Steps for dps [default: 100000]
-  --dps-max <dps_max>               Max plausible dps [default: 6000000]
+  --dps-max <dps_max>               Max plausible dps [default: 7000000]
 ";
 
 #[derive(Deserialize)]
