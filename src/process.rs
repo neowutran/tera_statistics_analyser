@@ -41,7 +41,7 @@ impl DataDetails {
 pub struct DungeonData {
     pub members: HashMap<Class, DataDetails>,
     pub healers_number: HashMap<u8, u32>,
-    pub clear_time: Vec<u32>,
+    pub clear_time: Vec<u64>,
 }
 
 impl DungeonData {
@@ -112,8 +112,8 @@ pub fn store(
             None => continue,
         };
         let fight = Fight::new(
-            content.content.area_id.parse().unwrap(),
-            content.content.boss_id.parse().unwrap(),
+            content.content.area_id,
+            content.content.boss_id,
         );
         let key = get_key(region, &patch_name);
         let dungeon_data = data.entry(fight)
@@ -122,7 +122,7 @@ pub fn store(
             .or_insert(DungeonData::new());
         dungeon_data
             .clear_time
-            .push(content.content.fight_duration.parse::<u32>().unwrap());
+            .push(content.content.fight_duration);
         let mut healers_number: u8 = 0;
         for member in content.content.members {
             let class = match class_map.get_by_first(&&*(member.player_class)) {
@@ -154,8 +154,8 @@ pub fn store(
 pub struct ExportResult {
     pub class: HashMap<Class, ExportClass>,
     pub healers_number: HashMap<u8, u32>,
-    pub clear_time_median: u32,
-    pub clear_time_percentile_90: u32,
+    pub clear_time_median: u64,
+    pub clear_time_percentile_90: u64,
 }
 
 pub struct ExportClass {

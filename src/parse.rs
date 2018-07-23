@@ -1,8 +1,9 @@
+extern crate serde;
 extern crate serde_json;
 extern crate xz2;
 use self::xz2::read;
-use std::fs::File;
-use std::io::prelude::*;
+use std::{fs::File, io::prelude::*, fmt, marker::PhantomData};
+use self::serde::{de, Deserializer};
 impl StatsLog {
     pub fn new(filename: &String) -> Result<Vec<StatsLog>, String> {
         let mut decompressed = Vec::new();
@@ -17,7 +18,7 @@ impl StatsLog {
                 .map_err(|_| format!("Unable to decompress {}", filename))?;
         }
         let result = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
-            .map_err(|_| format!("Unable to parse {}", filename))?;
+            .map_err(|e| format!("Unable to parse {}: {}", filename, e))?;
         Ok(result)
     }
 }
@@ -30,20 +31,78 @@ pub struct StatsLog {
     //name: String,
 }
 
+fn u32_from_str_or_int<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where D: Deserializer<'de> {
+    struct StringOrInt(PhantomData<u32>);
+    impl<'de> de::Visitor<'de> for StringOrInt {
+        type Value = u32;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("string or int")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where E: de::Error
+        {
+            Ok(value.parse::<u32>().unwrap())
+        }
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where E: de::Error
+        {
+            Ok(value as u32)
+        }
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where E: de::Error{
+                Ok(value as u32)
+        }
+
+    }
+
+    deserializer.deserialize_any(StringOrInt(PhantomData))
+}
+fn u64_from_str_or_int<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where D: Deserializer<'de> {
+    struct StringOrInt(PhantomData<u64>);
+    impl<'de> de::Visitor<'de> for StringOrInt {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("string or int")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where E: de::Error
+        {
+            Ok(value.parse::<u64>().unwrap())
+        }
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where E: de::Error
+        {
+            Ok(value as u64)
+        }
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where E: de::Error{
+                Ok(value as u64)
+        }
+
+    }
+
+    deserializer.deserialize_any(StringOrInt(PhantomData))
+}
 #[derive(Deserialize)]
 pub struct Encounter {
-    #[serde(rename = "areaId")]
-    pub area_id: String,
-    #[serde(rename = "bossId")]
-    pub boss_id: String,
+    #[serde(rename = "areaId", deserialize_with="u32_from_str_or_int")]
+    pub area_id: u32,
+    #[serde(rename = "bossId", deserialize_with="u32_from_str_or_int")]
+    pub boss_id: u32,
     //#[serde(rename="debuffDetail")]
     //debuff_detail: Vec<Vec<Value>>,
     //#[serde(rename="debuffUptime")]
     //debuff_uptime: Vec<Value>,
     //#[serde(rename="encounterUnixEpoch")]
     //encounter_unix_epoch: i64,
-    #[serde(rename = "fightDuration")]
-    pub fight_duration: String,
+    #[serde(rename = "fightDuration", deserialize_with="u64_from_str_or_int")]
+    pub fight_duration: u64,
     pub timestamp: u64,
     pub members: Vec<Members>,
     //#[serde(rename="meterName")]
