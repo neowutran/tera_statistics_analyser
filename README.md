@@ -21,7 +21,7 @@ Options:
 tera_statistics_analyser ~/tmp/ ~/Documents/TeraDatabaseData/
 ```
 # Input 
-https://neowutran.ovh/files-storage/TeraStatistics/
+Due to technical difficulties ( Aka: public storage perf / size issue ), input data are no longer available publicly
 
 # Output
 https://github.com/neowutran/TeraDatabaseData
