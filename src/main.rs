@@ -102,7 +102,7 @@ fn main() {
                 Ok(data) => thread_tx.send(data).unwrap(),
                 Err(err) => {
                     println!("{}", err);
-                    //fs::remove_file(&string).unwrap();
+                    fs::remove_file(&string).unwrap();
                 }
             };
         });
