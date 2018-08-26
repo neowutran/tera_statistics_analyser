@@ -111,18 +111,13 @@ pub fn store(
             Some(t) => t,
             None => continue,
         };
-        let fight = Fight::new(
-            content.content.area_id,
-            content.content.boss_id,
-        );
+        let fight = Fight::new(content.content.area_id, content.content.boss_id);
         let key = get_key(region, &patch_name);
         let dungeon_data = data.entry(fight)
             .or_insert(Data::new())
             .entry(key)
             .or_insert(DungeonData::new());
-        dungeon_data
-            .clear_time
-            .push(content.content.fight_duration);
+        dungeon_data.clear_time.push(content.content.fight_duration);
         let mut healers_number: u8 = 0;
         for member in content.content.members {
             let class = match class_map.get_by_first(&&*(member.player_class)) {
