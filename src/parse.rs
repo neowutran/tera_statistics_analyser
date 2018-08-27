@@ -17,10 +17,24 @@ impl StatsLog {
                 .read_to_end(&mut decompressed)
                 .map_err(|_| format!("Unable to decompress {}", filename))?;
         }
-        let result = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
+        let mut result: Vec<StatsLog> = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
             .map_err(|e| format!("Unable to parse {}: {}", filename, e))?;
+        result.retain(| ref one_fight| !contain_forbidden_buff(one_fight));
         Ok(result)
     }
+}
+
+fn contain_forbidden_buff(stat: &&StatsLog) -> bool{
+    let illegal_buff = vec!["25", "26", "27", "28", "37", "31", "36", "33"];
+    for member in &stat.content.members{
+        for buff in &member.buff_uptime{
+            if illegal_buff.contains(&&*(buff.key)) {
+                println!("Illegal buff found: {}", buff.key);
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // Full json structure
@@ -29,6 +43,15 @@ pub struct StatsLog {
     pub content: Encounter,
     pub directory: String,
     //name: String,
+}
+
+
+#[derive(Deserialize)]
+pub struct BuffUptime{
+    #[serde(rename="Key")]
+    pub key: String,
+    #[serde(rename="Value")]
+    pub value: String,
 }
 
 fn u32_from_str_or_int<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -130,8 +153,8 @@ pub struct Members {
     //aggro: String,
     //#[serde(rename="buffDetail")]
     //buff_detail: Vec<Value>,
-    //#[serde(rename="buffUptime")]
-    //buff_uptime: Vec<Value>,
+    #[serde(rename="buffUptime")]
+    buff_uptime: Vec<BuffUptime>,
     //#[serde(default)]
     //guild: String,
     //#[serde(default)]
