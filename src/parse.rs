@@ -32,7 +32,12 @@ fn contain_forbidden_buff(stat: &&StatsLog) -> bool{
                 println!("Illegal buff found: {}", buff.key);
                 return true;
             }
+            if buff.key == "8888889" && buff.value.parse::<i16>().unwrap() > 50{
+                println!("Slaying found");
+                return true;
+            }
         }
+
     }
     false
 }
