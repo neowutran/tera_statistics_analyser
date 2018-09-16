@@ -29,16 +29,17 @@ fn contain_forbidden_buff(stat: &&StatsLog) -> bool{
     for member in &stat.content.members{
         for buff in &member.buff_uptime{
             if illegal_buff.contains(&&*(buff.key)) {
-                println!("Illegal buff found: {}", buff.key);
+                //println!("Illegal buff found: {}", buff.key);
                 return true;
             }
             if buff.key == "8888889" && buff.value.parse::<i16>().unwrap() > 50{
-                println!("Slaying found");
+                //println!("Slaying found");
                 return true;
             }
         }
 
     }
+    //println!("Yukikoo");
     false
 }
 
