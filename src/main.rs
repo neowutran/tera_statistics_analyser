@@ -202,8 +202,23 @@ fn export(
     class_map: &BidirMap<&str, Class>,
     region_map: &HashMap<&str, HashMap<&str, (u64, u64)>>,
 ) {
+    for (date, mut region) in raw_data.usage{
+      let mut result_usage = String::new();
+      for(region, number) in region{
+        result_usage.push_str(&format!("{}:{}\n", region, number));
+      }
+      write_file(
+                        format!(
+                            "{target}/usage/{date}.txt",
+                            target = target,
+                            date = date,
+                        ),
+                        &result_usage,
+                    );
+
+    }
     let mut class_global = HashMap::new();
-    for (fight_key, mut fight_data) in raw_data {
+    for (fight_key, mut fight_data) in raw_data.fights {
         for (region, patch_data) in region_map {
             for patch_name in patch_data.keys() {
                 let key = process::get_key(region, patch_name);

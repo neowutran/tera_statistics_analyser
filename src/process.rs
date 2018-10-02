@@ -1,7 +1,7 @@
 use bidir_map::BidirMap;
 use parse::StatsLog;
 use std::collections::HashMap;
-
+use chrono::{TimeZone, prelude::*};
 #[derive(PartialEq, Hash, Eq, Clone)]
 pub enum Class {
     Archer,
@@ -55,7 +55,19 @@ impl DungeonData {
 }
 
 pub type Data = HashMap<String, DungeonData>;
-pub type GlobalData = HashMap<Fight, Data>;
+pub struct GlobalData {
+    pub fights: HashMap<Fight, Data>,
+    pub usage: HashMap<String, HashMap<String, u32>>,
+}
+
+impl GlobalData{
+    pub fn new() -> GlobalData{
+        GlobalData{
+            fights: HashMap::new(),
+            usage: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct Fight {
@@ -107,13 +119,15 @@ pub fn store(
         let directory_vec: Vec<&str> = content.directory.split(".").collect();
         let region = directory_vec[0];
         let timestamp = content.content.timestamp;
+        let date = Utc.timestamp(timestamp as i64, 0).format("%Y-%m-%d").to_string();
+        *(data.usage.entry(date).or_insert(HashMap::new()).entry(region.to_string()).or_insert(0)) += 1;
         let patch_name = match get_patch_name(region_map, region, timestamp) {
             Some(t) => t,
             None => continue,
         };
         let fight = Fight::new(content.content.area_id, content.content.boss_id);
         let key = get_key(region, &patch_name);
-        let dungeon_data = data.entry(fight)
+        let dungeon_data = data.fights.entry(fight)
             .or_insert(Data::new())
             .entry(key)
             .or_insert(DungeonData::new());
@@ -151,6 +165,7 @@ pub struct ExportResult {
     pub healers_number: HashMap<u8, u32>,
     pub clear_time_median: u64,
     pub clear_time_percentile_90: u64,
+    pub usage: HashMap<String, HashMap<String, u32>>
 }
 
 pub struct ExportClass {
@@ -165,6 +180,7 @@ impl ExportResult {
         ExportResult {
             class: HashMap::new(),
             healers_number: HashMap::new(),
+            usage: HashMap::new(),
             clear_time_median: 0,
             clear_time_percentile_90: 0,
         }
