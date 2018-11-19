@@ -66,19 +66,21 @@ fn main() {
       //"68"=> (1526378400, 1528365600),
       //"69"=> (1528365600, 1531390284),
       //"71" => ( 1531390284,1536770959),
-      "old" => (u64::min_value(), 1539073061),
+      "old" => (u64::min_value(), 1542104390),
       //"74" => (1536770959,u64::max_value()),
-      "75" => (1539073061, u64::max_value())
+      //"75" => (1539073061, u64::max_value())
+      "76" => (1542104390, u64::max_value())
     ],
     "NA" => hashmap![
 
-      "old" => (u64::min_value(), 1536770959),
+      "old" => (u64::min_value(), 1542104390),
       //"66" => (1520964000, 1523988000),
       //"67"=>(1523988000, 1526378400),
       //"68"=>(1526378400, 1528365600),
       //"69" => (1528365600, 1531390284),
       //"71" => (1531390284, 1536770959),
-      "74" => (1536770959,u64::max_value())
+      //"74" => (1536770959,u64::max_value())
+      "76" => (1542104390,u64::max_value())
     ],
     "KR" => hashmap![
 
@@ -93,14 +95,15 @@ fn main() {
     ],
     "JP" => hashmap![
 
-      "old" => (u64::min_value(), 1539159461),
+      "old" => (u64::min_value(), 1542104390),
       //"66" => (1520380800, 1523434273),
       //"67" => (1523434273, 1525824000),
       //"68" => (1525824000, 1528279200),
       //"69" => (1528279200, 1531303884),
       //"71" => (1531303884, 1536770959),
       //"74" => (1536770959, u64::max_value()),
-      "75" => (1539159461, u64::max_value())
+      //"75" => (1539159461, u64::max_value())
+      "76" => (1542104390, u64::max_value())
     ],
     "RU" => hashmap![
 
@@ -127,14 +130,15 @@ fn main() {
     ],
     "TW" => hashmap![
 
-      "old" => (u64::min_value(), 1539952467),
+      "old" => (u64::min_value(), 1542104390),
       //"66"=> (1521417600, 1523520673),
       //"67"=>(1523520673, 1525824000),
       //"68" => ( 1525824000, 1528279200),
       //"69" => (1528279200, 1531303884),
       //"71" => (1531303884,1536770959),
       //"74" => (1536770959,u64::max_value())
-      "75" => (1539952467,u64::max_value())
+      //"75" => (1539952467,u64::max_value())
+      "76" => (1542104390, u64::max_value())
     ]
   ];
     let class_map = bidir_map!(
@@ -156,7 +160,7 @@ fn main() {
     let (tx, rx): (Sender<Vec<StatsLog>>, Receiver<Vec<StatsLog>>) = mpsc::channel();
     let search = format!("{}/**/*.xz", args.arg_source);
     let full_cpus = num_cpus::get();
-    let mut usable_cpus = full_cpus - 1;
+    let mut usable_cpus = full_cpus - 3;
     println!("Number of virtual core: {}", full_cpus);
     if usable_cpus <= 1 {
         usable_cpus = 1;
@@ -209,6 +213,7 @@ fn export(
     class_map: &BidirMap<&str, Class>,
     region_map: &HashMap<&str, HashMap<&str, (u64, u64)>>,
 ) {
+  /*
     for (date, mut region) in raw_data.usage{
       let mut result_usage = String::new();
       for(region, number) in region{
@@ -223,7 +228,7 @@ fn export(
                         &result_usage,
                     );
 
-    }
+    }*/
     let mut class_global = HashMap::new();
     for (fight_key, mut fight_data) in raw_data.fights {
         for (region, patch_data) in region_map {
@@ -234,6 +239,7 @@ fn export(
                     None => continue,
                 };
                 let result = process::export(time_data, class_map);
+                /*
                 {
                     let mut result_healers_number = String::new();
                     for (healers_number, count) in result.healers_number {
@@ -249,7 +255,7 @@ fn export(
                         ),
                         &result_healers_number,
                     );
-                }
+                }*/
                 write_file(
                     format!(
                         "{target}/clear_time/{area_boss}/{region}/{patch_name}.txt",

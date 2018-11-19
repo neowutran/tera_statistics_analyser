@@ -40,7 +40,7 @@ impl DataDetails {
 
 pub struct DungeonData {
     pub members: HashMap<Class, DataDetails>,
-    pub healers_number: HashMap<u8, u32>,
+    //pub healers_number: HashMap<u8, u32>,
     pub clear_time: Vec<u64>,
 }
 
@@ -48,7 +48,7 @@ impl DungeonData {
     fn new() -> DungeonData {
         DungeonData {
             members: HashMap::new(),
-            healers_number: HashMap::new(),
+            //healers_number: HashMap::new(),
             clear_time: Vec::new(),
         }
     }
@@ -57,14 +57,14 @@ impl DungeonData {
 pub type Data = HashMap<String, DungeonData>;
 pub struct GlobalData {
     pub fights: HashMap<Fight, Data>,
-    pub usage: HashMap<String, HashMap<String, u32>>,
+    //pub usage: HashMap<String, HashMap<String, u32>>,
 }
 
 impl GlobalData{
     pub fn new() -> GlobalData{
         GlobalData{
             fights: HashMap::new(),
-            usage: HashMap::new(),
+      //      usage: HashMap::new(),
         }
     }
 }
@@ -119,8 +119,8 @@ pub fn store(
         let directory_vec: Vec<&str> = content.directory.split(".").collect();
         let region = directory_vec[0];
         let timestamp = content.content.timestamp;
-        let date = Utc.timestamp(timestamp as i64, 0).format("%Y-%m-%d").to_string();
-        *(data.usage.entry(date).or_insert(HashMap::new()).entry(region.to_string()).or_insert(0)) += 1;
+        //let date = Utc.timestamp(timestamp as i64, 0).format("%Y-%m-%d").to_string();
+        //*(data.usage.entry(date).or_insert(HashMap::new()).entry(region.to_string()).or_insert(0)) += 1;
         let patch_name = match get_patch_name(region_map, region, timestamp) {
             Some(t) => t,
             None => continue,
@@ -132,7 +132,7 @@ pub fn store(
             .entry(key)
             .or_insert(DungeonData::new());
         dungeon_data.clear_time.push(content.content.fight_duration);
-        let mut healers_number: u8 = 0;
+        //let mut healers_number: u8 = 0;
         for member in content.content.members {
             let class = match class_map.get_by_first(&&*(member.player_class)) {
                 Some(c) => c,
@@ -144,28 +144,30 @@ pub fn store(
                 Err(_) => {}
             };
             let stepped_dps = ((dps / dps_steps) as u32) * dps_steps;
-            if class == &Class::Mystic || class == &Class::Priest {
-                healers_number += 1;
-            }
+            //if class == &Class::Mystic || class == &Class::Priest {
+            //    healers_number += 1;
+            //}
             dungeon_data
                 .members
                 .entry(class.clone())
                 .or_insert(DataDetails::new())
                 .add(dps, stepped_dps);
         }
+        /*
         *(dungeon_data
             .healers_number
             .entry(healers_number)
             .or_insert(0)) += 1;
+        */
     }
 }
 
 pub struct ExportResult {
     pub class: HashMap<Class, ExportClass>,
-    pub healers_number: HashMap<u8, u32>,
+    //pub healers_number: HashMap<u8, u32>,
     pub clear_time_median: u64,
     pub clear_time_percentile_90: u64,
-    pub usage: HashMap<String, HashMap<String, u32>>
+    //pub usage: HashMap<String, HashMap<String, u32>>
 }
 
 pub struct ExportClass {
@@ -179,8 +181,8 @@ impl ExportResult {
     fn new() -> ExportResult {
         ExportResult {
             class: HashMap::new(),
-            healers_number: HashMap::new(),
-            usage: HashMap::new(),
+            //healers_number: HashMap::new(),
+            //usage: HashMap::new(),
             clear_time_median: 0,
             clear_time_percentile_90: 0,
         }
@@ -189,7 +191,7 @@ impl ExportResult {
 
 pub fn export(mut raw_data: DungeonData, class_map: &BidirMap<&str, Class>) -> ExportResult {
     let mut result = ExportResult::new();
-    result.healers_number = raw_data.healers_number;
+    //result.healers_number = raw_data.healers_number;
     raw_data.clear_time.sort();
     result.clear_time_median = raw_data.clear_time[(raw_data.clear_time.len() / 2) as usize];
     result.clear_time_percentile_90 =

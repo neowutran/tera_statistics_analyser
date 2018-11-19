@@ -20,7 +20,7 @@ impl StatsLog {
         let mut result: Vec<StatsLog> = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
             .map_err(|e| format!("Unable to parse {}: {}", filename, e))?;
         result.retain(| ref one_fight| !contain_forbidden_buff(one_fight) && !contain_forbidden_server(one_fight));
-        result.retain(| ref one_fight| !contain_shit(one_fight));
+        result.retain(| ref one_fight| !contain_shit(one_fight, filename));
         Ok(result)
     }
 }
@@ -65,12 +65,13 @@ fn contain_forbidden_server(stat: &&StatsLog) -> bool{
 
 }
 
-fn contain_shit(stat: &&StatsLog)->bool{
+fn contain_shit(stat: &&StatsLog, filename: &str)->bool{
     if stat.content.area_id != 444{
         return false;
     }
     for member in &stat.content.members{
         if member.player_class == "Ninja" && member.player_dps.parse::<u64>().unwrap() > 9_000_000{
+            println!("filename: {}", filename);
             println!("party size: {}", &stat.content.members.len());
             println!("trouve {}: {:?}", member.player_dps, member.buff_uptime);
             return false;
