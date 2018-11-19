@@ -19,7 +19,8 @@ impl StatsLog {
         }
         let mut result: Vec<StatsLog> = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
             .map_err(|e| format!("Unable to parse {}: {}", filename, e))?;
-        result.retain(| ref one_fight| !contain_forbidden_buff(one_fight));
+        result.retain(| ref one_fight| !contain_forbidden_buff(one_fight) && !contain_forbidden_server(one_fight));
+        result.retain(| ref one_fight| !contain_shit(one_fight));
         Ok(result)
     }
 }
@@ -43,6 +44,42 @@ fn contain_forbidden_buff(stat: &&StatsLog) -> bool{
     false
 }
 
+fn contain_forbidden_server(stat: &&StatsLog) -> bool{
+    let directory_vec: Vec<&str> = stat.directory.split(".").collect();
+    let region = directory_vec[0];
+    if region == "EU" {
+        for member in &stat.content.members{
+            if member.player_server != "Killian" &&
+                    member.player_server != "Seren" &&
+                    member.player_server != "Mystel" &&
+                    member.player_server != "Yurian"{
+                        //println!("rejected server: {}", member.player_server);
+                        return true;
+                    }
+        }
+        return false;
+
+    }
+
+    false
+
+}
+
+fn contain_shit(stat: &&StatsLog)->bool{
+    if stat.content.area_id != 444{
+        return false;
+    }
+    for member in &stat.content.members{
+        if member.player_class == "Ninja" && member.player_dps.parse::<u64>().unwrap() > 9_000_000{
+            println!("party size: {}", &stat.content.members.len());
+            println!("trouve {}: {:?}", member.player_dps, member.buff_uptime);
+            return false;
+       }
+    }
+    return false;
+
+}
+
 // Full json structure
 #[derive(Deserialize)]
 pub struct StatsLog {
@@ -52,7 +89,7 @@ pub struct StatsLog {
 }
 
 
-#[derive(Deserialize)]
+#[derive(Deserialize,Debug)]
 pub struct BuffUptime{
     #[serde(rename="Key")]
     pub key: String,
