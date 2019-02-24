@@ -20,7 +20,7 @@ impl StatsLog {
         let mut result: Vec<StatsLog> = serde_json::from_str(&String::from_utf8(decompressed).map_err(|_| format!("UTF8 invalid {}", filename))?)
             .map_err(|e| format!("Unable to parse {}: {}", filename, e))?;
         result.retain(| ref one_fight| !contain_forbidden_buff(one_fight) && !contain_forbidden_server(one_fight));
-        result.retain(| ref one_fight| !contain_shit(one_fight, filename));
+        //result.retain(| ref one_fight| !contain_shit(one_fight, filename));
         Ok(result)
     }
 }
